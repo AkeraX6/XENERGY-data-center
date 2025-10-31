@@ -37,11 +37,11 @@ st.markdown(
     """
     <style>
         .banner-container {
-            width: 100%;
+            width: 120%;
             height: 120px; /* smaller height for sleek banner look */
             overflow: hidden;
-            border-radius: 10px;
-            margin-bottom: 20px;
+            border-radius: 30px;
+            margin-bottom: 50px;
         }
         .banner-container img {
             width: 100%;
@@ -144,6 +144,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
