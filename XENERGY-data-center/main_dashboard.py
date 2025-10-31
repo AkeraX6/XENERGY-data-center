@@ -1,7 +1,6 @@
 import streamlit as st
 import importlib.util
 from pathlib import Path
-from PIL import Image
 
 # ==========================================================
 # PAGE CONFIGURATION
@@ -12,7 +11,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Hide Streamlit default UI elements
+# ==========================================================
+# HIDE DEFAULT STREAMLIT UI ELEMENTS
+# ==========================================================
 st.markdown(
     """
     <style>
@@ -31,25 +32,25 @@ if "page" not in st.session_state:
     st.session_state.page = "dashboard"
 
 # ==========================================================
-# HEADER BANNER IMAGE (Facebook-style)
+# HEADER BANNER IMAGE (FULL-WIDTH FACEBOOK-STYLE)
 # ==========================================================
 st.markdown(
     """
     <style>
-    .banner-container {
-        width: 100%;
-        height: 250px;
-        overflow: hidden;
-        border-radius: 10px;
-        margin-bottom: 20px;
-    }
-    .banner-container img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        object-position: center;
-    }
-</style>
+        .banner-container {
+            width: 100%;
+            height: 250px; /* adjust for taller or shorter look */
+            overflow: hidden;
+            border-radius: 10px;
+            margin-bottom: 25px;
+        }
+        .banner-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;  /* fills horizontally without distortion */
+            object-position: center; /* keeps the main part of the image centered */
+        }
+    </style>
 
     <div class="banner-container">
         <img src="https://raw.githubusercontent.com/AkeraX6/XENERGY-data-center/main/XENERGY-data-center/Cover.png" alt="MAXAM Data Process Center Banner">
@@ -64,24 +65,14 @@ st.markdown(
 def dashboard_page():
     st.markdown(
         """
-        <div style='text-align:center; margin-top:-20px;'>
-            <h1 style='color:#d62828;'>💥 MAXAM Data Process Center 💥</h1>
-            <p style='color:gray; font-size:18px;'>
-                Unified platform for data processing across mining sites
-            </p>
-        </div>
-        <hr>
+        <hr style='margin-top: 10px; margin-bottom: 25px;'>
         """,
         unsafe_allow_html=True
     )
 
     st.subheader("🧭 Select Processing Module")
 
-    mine = st.selectbox(
-        "Select Mine",
-        ["Select...", "DGM", "Escondida", "Mantos Blancos"]
-    )
-
+    mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position"]
@@ -111,7 +102,7 @@ def dashboard_page():
             st.rerun()
 
 # ==========================================================
-# PAGE: MODULE
+# PAGE: MODULE EXECUTION
 # ==========================================================
 def module_page():
     pages_dir = Path(__file__).parent / "pages"
@@ -132,7 +123,7 @@ def module_page():
         st.error(f"❌ The file `{module_name}` was not found in `/pages` folder.")
         return
 
-    # Dynamically import & run module
+    # Load and execute selected module inline
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -144,6 +135,8 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
+
 
 
 
