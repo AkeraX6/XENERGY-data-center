@@ -70,7 +70,7 @@ def dashboard_page():
         unsafe_allow_html=True
     )
 
-    st.subheader("🔻 Select Processing Module")
+    st.subheader("🚩 Select Processing Module :")
 
     mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
@@ -135,6 +135,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
