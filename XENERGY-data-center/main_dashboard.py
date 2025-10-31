@@ -31,25 +31,24 @@ if "page" not in st.session_state:
     st.session_state.page = "dashboard"
 
 # ==========================================================
-# HEADER BANNER IMAGE
+# HEADER BANNER IMAGE (Facebook-style)
 # ==========================================================
-image_path = Path(__file__).parent / "Cover.png"
-
 st.markdown(
-    f"""
+    """
     <style>
-        .banner-container {{
+        .banner-container {
             width: 100%;
-            height: 180px; /* adjust the height to your preference */
+            height: 120px; /* smaller height for sleek banner look */
             overflow: hidden;
             border-radius: 10px;
-            margin-bottom: 15px;
-        }}
-        .banner-container img {{
+            margin-bottom: 20px;
+        }
+        .banner-container img {
             width: 100%;
             height: 100%;
-            object-fit: cover; /* ensures it behaves like a banner */
-        }}
+            object-fit: cover; /* fills horizontally without distortion */
+            object-position: center; /* keeps it centered */
+        }
     </style>
 
     <div class="banner-container">
@@ -58,8 +57,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-
 
 # ==========================================================
 # PAGE: DASHBOARD
@@ -147,6 +144,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
