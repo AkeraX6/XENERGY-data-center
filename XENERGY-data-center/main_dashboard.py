@@ -31,19 +31,34 @@ if "page" not in st.session_state:
     st.session_state.page = "dashboard"
 
 # ==========================================================
-# HEADER IMAGE
+# HEADER BANNER IMAGE
 # ==========================================================
-# Define relative image path (works on all systems)
 image_path = Path(__file__).parent / "Cover.png"
 
-try:
-    if image_path.exists():
-        image = Image.open(image_path)
-        st.image(image, use_container_width=True)
-    else:
-        st.warning("⚠️ Cover image not found. Please ensure 'Cover.png' is in the same folder.")
-except Exception as e:
-    st.error(f"⚠️ Could not load cover image: {e}")
+st.markdown(
+    f"""
+    <style>
+        .banner-container {{
+            width: 100%;
+            height: 180px; /* adjust the height to your preference */
+            overflow: hidden;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }}
+        .banner-container img {{
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* ensures it behaves like a banner */
+        }}
+    </style>
+
+    <div class="banner-container">
+        <img src="https://raw.githubusercontent.com/AkeraX6/XENERGY-data-center/main/XENERGY-data-center/Cover.png" alt="MAXAM Data Process Center Banner">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 
 # ==========================================================
@@ -132,6 +147,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
