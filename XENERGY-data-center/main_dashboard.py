@@ -33,13 +33,18 @@ if "page" not in st.session_state:
 # ==========================================================
 # HEADER IMAGE
 # ==========================================================
-# Load Cover.png (relative path → works locally & on Streamlit Cloud)
+# Define relative image path (works on all systems)
 image_path = Path(__file__).parent / "Cover.png"
 
-if image_path.exists():
-    st.image(str(image_path), use_container_width=True)
-else:
-    st.warning("⚠️ Cover image not found. Please ensure 'Cover.png' is in the same folder.")
+try:
+    if image_path.exists():
+        image = Image.open(image_path)
+        st.image(image, use_container_width=True)
+    else:
+        st.warning("⚠️ Cover image not found. Please ensure 'Cover.png' is in the same folder.")
+except Exception as e:
+    st.error(f"⚠️ Could not load cover image: {e}")
+
 
 # ==========================================================
 # PAGE: DASHBOARD
@@ -127,6 +132,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
