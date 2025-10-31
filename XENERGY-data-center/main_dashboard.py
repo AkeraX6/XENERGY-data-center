@@ -1,11 +1,10 @@
 import streamlit as st
 import importlib.util
 from pathlib import Path
-from PIL import Image
 
-# ==========================================================
+# ===============================
 # PAGE CONFIGURATION
-# ==========================================================
+# ===============================
 st.set_page_config(
     page_title="MAXAM Data Process Center",
     layout="wide",
@@ -13,45 +12,45 @@ st.set_page_config(
 )
 
 # Hide Streamlit default UI elements
-st.markdown(
-    """
+hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
+# ===============================
+# SESSION STATE INITIALIZATION
+# ===============================
+if "page" not in st.session_state:
+    st.session_state.page = "dashboard"
+
+# ===============================
+# HEADER IMAGE
+# ===============================
+image_path = r"C:\Users\oelkendi\OneDrive - MAXAM\Escritorio\Data_Process\Main Dashboard\Cover.png"
+
+st.markdown(
+    f"""
+    <div style="text-align:center;">
+        <img src="file:///{image_path.replace('\\', '/')}"
+             style="width:100%; border-radius:10px; margin-bottom:10px;">
+    </div>
     """,
     unsafe_allow_html=True
 )
 
-# ==========================================================
-# SESSION STATE INITIALIZATION
-# ==========================================================
-if "page" not in st.session_state:
-    st.session_state.page = "dashboard"
-
-# ==========================================================
-# HEADER IMAGE
-# ==========================================================
-# Load Cover.png (relative path → works locally & on Streamlit Cloud)
-image_path = Path(__file__).parent / "Cover.png"
-
-if image_path.exists():
-    st.image(str(image_path), use_container_width=True)
-else:
-    st.warning("⚠️ Cover image not found. Please ensure 'Cover.png' is in the same folder.")
-
-# ==========================================================
+# ===============================
 # PAGE: DASHBOARD
-# ==========================================================
+# ===============================
 def dashboard_page():
     st.markdown(
         """
-        <div style='text-align:center; margin-top:-20px;'>
-            <h1 style='color:#d62828;'>💥 MAXAM Data Process Center 💥</h1>
-            <p style='color:gray; font-size:18px;'>
-                Unified platform for data processing across mining sites
-            </p>
+        <div style='text-align:center;'>
+            <h1>💥 MAXAM Data Process Center 💥</h1>
+            <p style='color:gray;'>Unified platform for data processing across mining sites</p>
         </div>
         <hr>
         """,
@@ -60,11 +59,7 @@ def dashboard_page():
 
     st.subheader("🧭 Select Processing Module")
 
-    mine = st.selectbox(
-        "Select Mine",
-        ["Select...", "DGM", "Escondida", "Mantos Blancos"]
-    )
-
+    mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position"]
@@ -93,9 +88,9 @@ def dashboard_page():
             st.session_state.page = "module"
             st.rerun()
 
-# ==========================================================
+# ===============================
 # PAGE: MODULE
-# ==========================================================
+# ===============================
 def module_page():
     pages_dir = Path(__file__).parent / "pages"
     module_name = st.session_state.selected_module
@@ -114,16 +109,17 @@ def module_page():
     if not module_path.exists():
         st.error(f"❌ The file `{module_name}` was not found in `/pages` folder.")
         return
-
-    # Dynamically import & run module
+    
+    # Load and execute selected module inline
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-# ==========================================================
+# ===============================
 # NAVIGATION LOGIC
-# ==========================================================
+# ===============================
 if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
