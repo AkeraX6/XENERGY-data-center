@@ -131,10 +131,8 @@ with st.expander("⚙️ See Processing Steps", expanded=False):
         before = len(df)
         df["Hole Length (Design)"] = pd.to_numeric(df["Hole Length (Design)"], errors="coerce").replace(0, pd.NA)
         df["Hole Length (Actual)"] = pd.to_numeric(df["Hole Length (Actual)"], errors="coerce").replace(0, pd.NA)
-
         df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
         df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
-
         df = df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all")
         deleted = before - len(df)
         steps_done.append(f"✅ Cross-filled Hole Length values (removed {deleted} empty rows).")
@@ -146,10 +144,8 @@ with st.expander("⚙️ See Processing Steps", expanded=False):
         before = len(df)
         df["Explosive (kg) (Design)"] = pd.to_numeric(df["Explosive (kg) (Design)"], errors="coerce").replace(0, pd.NA)
         df["Explosive (kg) (Actual)"] = pd.to_numeric(df["Explosive (kg) (Actual)"], errors="coerce").replace(0, pd.NA)
-
         df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
         df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
-
         df = df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all")
         deleted = before - len(df)
         steps_done.append(f"✅ Cross-filled Explosive values (removed {deleted} empty rows).")
@@ -178,6 +174,24 @@ with st.expander("⚙️ See Processing Steps", expanded=False):
             f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
             unsafe_allow_html=True
         )
+
+# ==================================================
+# DATE RANGE EXTRACTION
+# ==================================================
+date_col = None
+for col in df.columns:
+    if "Date" in col or "Fecha" in col:
+        date_col = col
+        break
+
+file_suffix = ""
+if date_col:
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    valid_dates = df[date_col].dropna()
+    if not valid_dates.empty:
+        min_date = valid_dates.min().strftime("%d%m%y")
+        max_date = valid_dates.max().strftime("%d%m%y")
+        file_suffix = f"_{min_date}_{max_date}"
 
 # ==================================================
 # SHOW CLEANED RESULTS
@@ -213,12 +227,14 @@ excel_buffer.seek(0)
 csv_buffer = io.StringIO()
 export_df.to_csv(csv_buffer, index=False, sep=";")
 
+file_base = f"DGM_QAQC_Cleaned{file_suffix}"
+
 col1, col2 = st.columns(2)
 with col1:
     st.download_button(
         "📘 Download Excel File",
         excel_buffer,
-        file_name="DGM_QAQC_Merged_Cleaned.xlsx",
+        file_name=f"{file_base}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
@@ -226,7 +242,7 @@ with col2:
     st.download_button(
         "📗 Download CSV File",
         csv_buffer.getvalue(),
-        file_name="DGM_QAQC_Merged_Cleaned.csv",
+        file_name=f"{file_base}.csv",
         mime="text/csv",
         use_container_width=True
     )
