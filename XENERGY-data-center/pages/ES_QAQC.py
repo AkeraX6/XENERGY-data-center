@@ -104,18 +104,30 @@ if uploaded_file is not None:
                 txt = str(text).upper()
                 m = re.search(r"[A-Z]{1,3}(\d{1,2})", txt)
                 return m.group(1) if m else None
-
-            df["Expansion"] = df["Blast"].apply(extract_expansion)
+            
+            def extract_grid(text):
+                if pd.isna(text):
+                    return None
+         # Extract 4 consecutive digits appearing after the first underscore (e.g., 5006)
+                m = re.search(r"_(\d{4})_", str(text))
+                if m:
+                    return m.group(1)
+         # fallback — take the first 4-digit number after an underscore if pattern differs
+                m2 = re.search(r"_(\d{4})", str(text))
+                return m2.group(1) if m2 else None
+            
             df["Nivel"] = df["Blast"].apply(extract_nivel)
+            df["Expansion"] = df["Blast"].apply(extract_expansion)
+            df["Grid"] = df["Blast"].apply(extract_grid)
 
-            # Move Expansion + Nivel next to Blast
+         # Move Nivel, Expansion, and Grid next to Blast in this order
             cols = list(df.columns)
-            for c in ["Expansion", "Nivel"]:
+            for c in ["Nivel", "Expansion", "Grid"]:
                 if c in cols:
                     cols.remove(c)
             if "Blast" in cols:
                 idx = cols.index("Blast")
-                cols[idx + 1:idx + 1] = ["Expansion", "Nivel"]
+                cols[idx + 1:idx + 1] = ["Nivel", "Expansion", "Grid"]
                 df = df[cols]
 
             steps_done.append("✅ Extracted Expansion and Nivel columns next to Blast.")
@@ -279,4 +291,5 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
 
