@@ -66,17 +66,10 @@ if uploaded_file is not None:
         # STEP 1 – Clean invalid Density values (empty, letters, symbols, negatives, zero)
         if "Density" in df.columns:
             before = len(df)
-
-            # Convert safely to numeric, invalid to NaN
             df["Density_clean"] = pd.to_numeric(df["Density"], errors="coerce")
-
-            # Keep only positive valid numeric values
-            df = df[df["Density_clean"].notna()]
-            df = df[df["Density_clean"] > 0]
-
+            df = df[df["Density_clean"].notna() & (df["Density_clean"] > 0)]
             deleted = before - len(df)
-            df = df.drop(columns=["Density_clean"])
-
+            df.drop(columns=["Density_clean"], inplace=True)
             steps_done.append(f"✅ Cleaned Density: removed {deleted} invalid rows (letters, negatives, symbols, or empty).")
         else:
             steps_done.append("❌ Column 'Density' not found in the file.")
@@ -90,8 +83,9 @@ if uploaded_file is not None:
         else:
             steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
 
-        # STEP 3 – Extract Expansion and Nivel from Blast
+        # STEP 3 – Extract Nivel, Expansion, and Grid from Blast
         if "Blast" in df.columns:
+
             def extract_nivel(text):
                 if pd.isna(text):
                     return None
@@ -102,25 +96,27 @@ if uploaded_file is not None:
                 if pd.isna(text):
                     return None
                 txt = str(text).upper()
-                m = re.search(r"[A-Z]{1,3}(\d{1,2})", txt)
+                # Match patterns like N12, PL1, L05, etc.
+                m = re.search(r"(?:N|PL|L)(\d{1,2})", txt)
                 return m.group(1) if m else None
-            
+
             def extract_grid(text):
                 if pd.isna(text):
                     return None
-         # Extract 4 consecutive digits appearing after the first underscore (e.g., 5006)
-                m = re.search(r"_(\d{4})_", str(text))
+                txt = str(text)
+                # Extract 4 consecutive digits after an underscore (e.g., _5006_)
+                m = re.search(r"_(\d{4})_", txt)
                 if m:
                     return m.group(1)
-         # fallback — take the first 4-digit number after an underscore if pattern differs
-                m2 = re.search(r"_(\d{4})", str(text))
+                # fallback — first 4-digit number after an underscore
+                m2 = re.search(r"_(\d{4})", txt)
                 return m2.group(1) if m2 else None
-            
+
             df["Nivel"] = df["Blast"].apply(extract_nivel)
             df["Expansion"] = df["Blast"].apply(extract_expansion)
             df["Grid"] = df["Blast"].apply(extract_grid)
 
-         # Move Nivel, Expansion, and Grid next to Blast in this order
+            # Reorder: Blast → Nivel → Expansion → Grid → rest
             cols = list(df.columns)
             for c in ["Nivel", "Expansion", "Grid"]:
                 if c in cols:
@@ -130,7 +126,7 @@ if uploaded_file is not None:
                 cols[idx + 1:idx + 1] = ["Nivel", "Expansion", "Grid"]
                 df = df[cols]
 
-            steps_done.append("✅ Extracted Expansion and Nivel columns next to Blast.")
+            steps_done.append("✅ Extracted Nivel, Expansion, and Grid columns next to Blast.")
         else:
             steps_done.append("❌ Column 'Blast' not found in file.")
 
@@ -183,7 +179,7 @@ if uploaded_file is not None:
             changed = (before_transform != df["Borehole"]).sum()
             steps_done.append(f"✅ Transformed {changed} Borehole values (B/C/D logic applied).")
 
-            # --- Remove Boreholes containing 'aux' (in any case/format) ---
+            # --- Remove Boreholes containing 'aux' (any case) ---
             before_aux = len(df)
             df = df[~df["Borehole"].astype(str).str.contains(r"aux", case=False, na=False)]
             deleted_aux = before_aux - len(df)
@@ -197,7 +193,7 @@ if uploaded_file is not None:
             before = len(df)
             df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
             df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
-            df = df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all")
+            df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all", inplace=True)
             deleted = before - len(df)
             steps_done.append(f"✅ Cross-filled Hole Length data (removed {deleted} rows).")
         else:
@@ -208,18 +204,14 @@ if uploaded_file is not None:
             before = len(df)
             df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
             df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
-            df = df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all")
+            df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all", inplace=True)
             deleted = before - len(df)
             steps_done.append(f"✅ Cross-filled Explosive data (removed {deleted} rows).")
         else:
             steps_done.append("⚠️ Explosive columns not found.")
 
         # STEP 7 – Clean Asset column
-        asset_col = None
-        for col in df.columns:
-            if "Asset" in col:
-                asset_col = col
-                break
+        asset_col = next((c for c in df.columns if "Asset" in c), None)
         if asset_col:
             before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
             df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
@@ -291,5 +283,7 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
+
 
 
