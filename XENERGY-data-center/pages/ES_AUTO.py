@@ -290,6 +290,50 @@ if uploaded_file is not None:
                     steps_done.append("⚠️ Column 'Operador' not found.")
             else:
                 steps_done.append(f"⚠️ ES_Operators.xlsx not found at {operators_path}")
+# STEP 12 – Broca Matching (from Brocas.xlsx)
+brocas_path = r"XENERGY-data-center/Brocas.xlsx"
+
+if os.path.exists(brocas_path):
+    try:
+        brocas_df = pd.read_excel(brocas_path)
+        brocas_df = brocas_df.dropna(subset=["Nombre", "Codigo"])
+        broca_map = dict(zip(brocas_df["Nombre"].astype(str).str.lower().str.strip(), brocas_df["Codigo"]))
+
+        def match_broca(value):
+            if pd.isna(value) or str(value).strip() == "":
+                return 0
+
+            val = str(value).strip().lower()
+            # Exact match
+            if val in broca_map:
+                return broca_map[val]
+
+            # Fuzzy match (if similar)
+            for key in broca_map.keys():
+                if key in val or val in key:
+                    return broca_map[key]
+
+            # Pattern-based extraction (s44, sj44, cn44 → 44)
+            m = re.search(r"(?:s|sj|cn)?(\d{2,3})", val)
+            if m:
+                return int(m.group(1))
+
+            # Default
+            return 0
+
+        if "Broca" in df.columns:
+            df["Broca_code"] = df["Broca"].apply(match_broca)
+            df["Broca"] = df["Broca_code"].astype(int)
+            df.drop(columns=["Broca_code"], inplace=True)
+
+            steps_done.append("✅ Matched Broca references using Brocas.xlsx and pattern extraction.")
+        else:
+            steps_done.append("⚠️ Column 'Broca' not found — skipped Broca mapping.")
+
+    except Exception as e:
+        steps_done.append(f"⚠️ Broca mapping error: {e}")
+else:
+    steps_done.append(f"⚠️ Brocas.xlsx not found at {brocas_path}")
 
             # STEP 11 – Modo de perforacion mapping
             df["Modo de perforacion"] = df["Modo de perforacion"].replace({"Manual": 1, "Autonomous": 2, "Teleremote": 3})
@@ -361,6 +405,7 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+
 
 
 
