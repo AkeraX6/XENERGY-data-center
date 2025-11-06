@@ -35,6 +35,7 @@ except Exception as e:
     st.error(f"❌ Could not read the file: {e}")
     st.stop()
 
+# Clean column names
 df.columns = (
     df.columns.astype(str)
     .str.strip()
@@ -82,7 +83,6 @@ def extract_expansion(text):
     if pd.isna(text):
         return pd.NA
     text = str(text).upper()
-    # Match F12, F_12, F-12, F012 etc.
     match = re.search(r"F[_\-]?0*(\d{1,2})", text)
     return int(match.group(1)) if match else pd.NA
 
@@ -90,22 +90,20 @@ def extract_level(text):
     if pd.isna(text):
         return pd.NA
     text = str(text).upper()
-    # Match a 4-digit level (e.g., 2595, 2610)
     match = re.search(r"(\d{4})", text)
     return int(match.group(1)) if match else pd.NA
 
-def extract_pala(val):
-    """Extract numeric part from PALA (works for PA_01, PA01, 1, '1.0', etc.)."""
+# --- Clean only PA_01 and PA_02
+def clean_pala(val):
     if pd.isna(val):
         return pd.NA
-    text = str(val).upper().strip()
-    match = re.search(r"(\d+)", text)
-    if match:
-        try:
-            return int(match.group(1))
-        except:
-            return pd.NA
-    return pd.NA
+    val = str(val).upper().strip()
+    if val == "PA_01":
+        return 1
+    elif val == "PA_02":
+        return 2
+    else:
+        return pd.NA  # delete others later
 
 # ======================================================
 # MAIN PROCESS
@@ -119,7 +117,7 @@ month = fechas.dt.month
 year = fechas.dt.year
 steps.append("✅ FECHA MEDICION split into Day / Month / Year")
 
-# 2️⃣ Expansion + Level from ID TRONADURA
+# 2️⃣ Extract Expansion + Level from ID TRONADURA
 expansion = df[col_id].apply(extract_expansion)
 level = df[col_id].apply(extract_level)
 steps.append("✅ Extracted Expansion and Level from ID TRONADURA")
@@ -137,14 +135,12 @@ result = pd.DataFrame({
     "% PASANTE 2\"": df[col_pasante],
 })
 
-# ======================================================
-# CLEANING PALA COLUMN (accepts PA_01, PA_02, etc.)
-# ======================================================
-result["PALA"] = result["PALA"].apply(extract_pala)
+# 4️⃣ Clean PALA (keep only PA_01 & PA_02)
 before = len(result)
+result["PALA"] = result["PALA"].apply(clean_pala)
 result = result[result["PALA"].isin([1, 2])]
 after = len(result)
-steps.append(f"✅ Filtered only PALA 1 and 2 (removed {before - after} rows)")
+steps.append(f"✅ Kept only PALA PA_01 and PA_02 (converted to 1 & 2) — removed {before - after} rows.")
 
 # ======================================================
 # DISPLAY RESULTS
@@ -189,4 +185,3 @@ with col2:
     )
 
 st.caption("Built by Maxam — Omar El Kendi")
-
