@@ -204,7 +204,7 @@ if uploaded_file is not None:
             brocas_path = r"XENERGY-data-center/Brocas.xlsx"
             if os.path.exists(brocas_path):
                 brocas_df = pd.read_excel(brocas_path).dropna(subset=["Ref", "Code"])
-                broca_map = dict(zip(brocas_df["Nombre"].astype(str).str.lower().str.strip(), brocas_df["Code"]))
+                broca_map = dict(zip(brocas_df["Ref"].astype(str).str.lower().str.strip(), brocas_df["Code"]))
 
                 def match_broca(value):
                     if pd.isna(value) or not str(value).strip():
@@ -277,6 +277,7 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
 
 
 
