@@ -9,14 +9,8 @@ import os
 # ==========================================================
 # PAGE HEADER
 # ==========================================================
-st.markdown(
-    "<h2 style='text-align:center;'>Escondida — Autonomía Data Cleaner</h2>",
-    unsafe_allow_html=True
-)
-st.markdown(
-    "<p style='text-align:center; color:gray;'>Automatic transformation and validation of drilling autonomy data.</p>",
-    unsafe_allow_html=True
-)
+st.markdown("<h2 style='text-align:center;'>Escondida — Autonomía Data Cleaner</h2>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:gray;'>Automatic transformation and validation of drilling autonomy data.</p>", unsafe_allow_html=True)
 st.markdown("---")
 
 # 🔙 Back to Menu
@@ -27,11 +21,16 @@ if st.button("⬅️ Back to Menu", key="back_esauto"):
 # ==========================================================
 # FILE UPLOAD
 # ==========================================================
-uploaded_file = st.file_uploader("📤 Upload your Excel file", type=["xlsx", "xls", "csv"])
+uploaded_file = st.file_uploader("📤 Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
+        # Read file
+        if uploaded_file.name.lower().endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
         st.subheader("📄 Original Data (Before Cleaning)")
         st.dataframe(df.head(10), use_container_width=True)
         st.info(f"📏 Total rows before cleaning: {len(df)}")
@@ -41,318 +40,212 @@ if uploaded_file is not None:
         # ==========================================================
         # CLEANING & TRANSFORMATION STEPS
         # ==========================================================
-        with st.expander("⚙️ See Processing Steps", expanded=False):
+        with st.expander("⚙️ Processing Steps (Click to Expand)", expanded=False):
 
-            # STEP 1 – Validate Column Structure
-            EXPECTED_COLUMNS = [
-                "Id", "Perforadora", "ShiftIndex", "tiempo incio de turno", "Tiempo final de turno",
-                "turno (dia o noche)", "Coordinacion", "Malla", "Pozo", "tiempo de inicio de ciclo",
-                "Tiempo final de ciclo", "Tiempo total de ciclo (en segundos)", "tiempo de inicio de pozo",
-                "Tiempo final de pozo", "Tiempo total de pozo (segundos)", "Coordenadas diseño X",
-                "Coordenadas diseño Y", "Coordenadas diseño Z", "Coordenada real inicioX",
-                "Coordenada real inicio Y", "Coordena real inicio Z", "Coordenada real final X",
-                "Coordenada real final Y", "Coordenada real final Z", "GPS calidad", "Dureza",
-                "Velocidad de penetracion (m/minutos)", "RPM de perforacion", "Pulldown KN",
-                "Largo de pozo planeado", "Largo de pozo real", "Desviacion XY", "Desviacion Z",
-                "Desviacion en largo", "Estatus de pozo", "Categoria de pozo", "Operador", "Broca",
-                "Tiempo en modo autonomo (segundos)", "Tiempo en modo manual (segundos)",
-                "Tiempo en modo teleremoto (segundos)", "Tiempo en modo Switched (segundos)",
-                "Tiempo en parada de emergencia (segundos)", "Modo de perforacion",
-                "Tiempo en modo configuracion (segundos)", "Tiempo en modo parqueo (segundos)",
-                "Tiempo en propulcion (segundos)", "Tiempo en perforacion (segundos)",
-                "Tiempo en demora (segundos)", "Velocidad efectiva ciclo (mt/hrs)",
-                "Velocidad de penetracion (mts/hrs)"
-            ]
-            if list(df.columns) != EXPECTED_COLUMNS:
-                steps_done.append("⚠️ Column names or order do not match the expected format.")
-            else:
-                steps_done.append("✅ File column structure validated successfully.")
-
-            # STEP 2 – Transform Base Columns
+            # STEP 1 — BASE TRANSFORMATIONS
             df["Perforadora"] = df["Perforadora"].astype(str).str.extract(r"(\d+)$")
-            df["Perforadora"] = pd.to_numeric(df["Perforadora"], errors="coerce")
+            df["Perforadora"] = pd.to_numeric(df["Perforadora"], errors="coerce").astype("Int64")
             df["turno (dia o noche)"] = df["turno (dia o noche)"].replace({"Dia": 1, "Noche": 2})
             df["Coordinacion"] = df["Coordinacion"].replace({"A": 1, "B": 2, "C": 3, "D": 4})
-            steps_done.append("✅ Normalized Perforadora, Turno, and Coordinacion values.")
+            steps_done.append("✅ Normalized Perforadora, Turno, and Coordinacion columns.")
 
-            # STEP 3 – Split and Extract Banco / Expansion / MallaID
+            # STEP 2 — MALLA SPLIT (Banco, Expansion, MallaID)
             if "Malla" in df.columns:
-                malla_split = df["Malla"].astype(str).str.split("-", expand=True)
-                banco = malla_split[0].str.replace(r"[^0-9]", "", regex=True).str[:4]
-                expansion = malla_split[1].str.replace(r"[^0-9]", "", regex=True)
-                mallaid = malla_split[2].str.replace(r"[^0-9]", "", regex=True).str[-4:]
+                m = df["Malla"].astype(str).str.split("-", expand=True)
+                banco = m[0].str.replace(r"[^0-9]", "", regex=True).str[:4]
+                expansion = m[1].str.replace(r"[^0-9]", "", regex=True) if m.shape[1] > 1 else pd.NA
+                mallaid = m[2].str.replace(r"[^0-9]", "", regex=True).str[-4:] if m.shape[1] > 2 else pd.NA
 
                 df["Malla"] = mallaid
-                df = df.rename(columns={"Malla": "MallaID"})
-                col_index = df.columns.get_loc("MallaID")
-                df.insert(col_index, "Banco", banco)
-                df.insert(col_index + 1, "Expansion", expansion)
-                steps_done.append("✅ Extracted Banco, Expansion, and MallaID from Malla column.")
+                df.rename(columns={"Malla": "MallaID"}, inplace=True)
+                idx = df.columns.get_loc("MallaID")
+                df.insert(idx, "Banco", banco)
+                df.insert(idx + 1, "Expansion", expansion)
+                steps_done.append("✅ Extracted Banco, Expansion, and MallaID (letters removed).")
             else:
-                steps_done.append("⚠️ Column 'Malla' not found in the dataset.")
+                steps_done.append("⚠️ Column 'Malla' not found — skipped Banco/Expansion/MallaID extraction.")
 
-            # STEP 4 – Transform and clean Pozo values
+            # STEP 3 — POZO CLEANING
             if "Pozo" in df.columns:
                 before_rows = len(df)
 
                 def transform_pozo(val):
                     val = str(val).strip()
-                    if val.startswith("Aux"):
-                        return val
-                    elif val.startswith("B"):
-                        return "100000" + val[1:]
-                    elif val.startswith("C"):
-                        return "200000" + val[1:]
-                    elif val.startswith("D"):
-                        return val[1:]
-                    else:
-                        return val
+                    if val.startswith("Aux"): return None
+                    if val.startswith("B"): return "100000" + val[1:]
+                    if val.startswith("C"): return "200000" + val[1:]
+                    if val.startswith("D"): return val[1:]
+                    return val
 
                 df["Pozo"] = df["Pozo"].apply(transform_pozo)
-                df = df[~df["Pozo"].astype(str).str.contains("Aux", case=False, na=False)]
-                df = df[~df["Pozo"].astype(str).str.fullmatch(r"[A-Za-z]+", na=False)]
+                df = df[~df["Pozo"].astype(str).str.contains("aux", case=False, na=False)]
                 df["Pozo_num"] = pd.to_numeric(df["Pozo"], errors="coerce")
                 df = df[df["Pozo_num"].notna() & (df["Pozo_num"] > 0)]
                 df["Pozo"] = df["Pozo_num"].astype(int)
-                df = df.drop(columns=["Pozo_num"])
-                deleted_rows = before_rows - len(df)
-                steps_done.append(f"✅ Cleaned Pozo ({deleted_rows} invalid rows deleted).")
+                df.drop(columns=["Pozo_num"], inplace=True)
+                steps_done.append(f"✅ Cleaned Pozo (removed {before_rows - len(df)} invalid rows).")
             else:
                 steps_done.append("⚠️ Column 'Pozo' not found.")
 
-            # STEP 5 – Cross-fill and clean Coordinates (X, Y, Z)
+            # STEP 4 — COORDINATE CLEANING
             before_rows = len(df)
             if "Banco" not in df.columns:
                 df["Banco"] = pd.NA
 
+            def cross_fill(a, b):
+                a.fillna(b, inplace=True)
+                b.fillna(a, inplace=True)
+
             # X
-            if "Coordenadas diseño X" in df.columns and "Coordenada real inicioX" in df.columns:
-                df["Coordenadas diseño X"] = df["Coordenadas diseño X"].fillna(df["Coordenada real inicioX"])
-                df["Coordenada real inicioX"] = df["Coordenada real inicioX"].fillna(df["Coordenadas diseño X"])
-                mask_x_invalid = df["Coordenadas diseño X"].isna() | df["Coordenada real inicioX"].isna() | (df["Coordenadas diseño X"] < 0) | (df["Coordenada real inicioX"] < 0)
-                df = df[~mask_x_invalid]
+            if {"Coordenadas diseño X", "Coordenada real inicioX"}.issubset(df.columns):
+                cross_fill(df["Coordenadas diseño X"], df["Coordenada real inicioX"])
                 df = df[(df["Coordenadas diseño X"] >= 100000) & (df["Coordenada real inicioX"] >= 100000)]
-
             # Y
-            if "Coordenadas diseño Y" in df.columns and "Coordenada real inicio Y" in df.columns:
-                df["Coordenadas diseño Y"] = df["Coordenadas diseño Y"].fillna(df["Coordenada real inicio Y"])
-                df["Coordenada real inicio Y"] = df["Coordenada real inicio Y"].fillna(df["Coordenadas diseño Y"])
-                mask_y_invalid = df["Coordenadas diseño Y"].isna() | df["Coordenada real inicio Y"].isna() | (df["Coordenadas diseño Y"] < 0) | (df["Coordenada real inicio Y"] < 0)
-                df = df[~mask_y_invalid]
-
+            if {"Coordenadas diseño Y", "Coordenada real inicio Y"}.issubset(df.columns):
+                cross_fill(df["Coordenadas diseño Y"], df["Coordenada real inicio Y"])
             # Z
-            if "Coordenadas diseño Z" in df.columns and "Coordena real inicio Z" in df.columns:
-                df["Coordenadas diseño Z"] = df["Coordenadas diseño Z"].fillna(df["Coordena real inicio Z"])
-                df["Coordena real inicio Z"] = df["Coordena real inicio Z"].fillna(df["Coordenadas diseño Z"])
+            if {"Coordenadas diseño Z", "Coordena real inicio Z"}.issubset(df.columns):
+                cross_fill(df["Coordenadas diseño Z"], df["Coordena real inicio Z"])
                 both_empty = df["Coordenadas diseño Z"].isna() & df["Coordena real inicio Z"].isna()
-                if both_empty.any():
-                    df.loc[both_empty, "Coordenadas diseño Z"] = pd.to_numeric(df.loc[both_empty, "Banco"], errors="coerce") + 15
-                    df.loc[both_empty, "Coordena real inicio Z"] = df.loc[both_empty, "Coordenadas diseño Z"]
-                df = df[(df["Coordenadas diseño Z"] >= 0) & (df["Coordena real inicio Z"] >= 0)]
-            deleted_rows = before_rows - len(df)
-            steps_done.append(f"✅ Cleaned Coordinates (removed {deleted_rows} invalid/negative rows).")
+                df.loc[both_empty, "Coordenadas diseño Z"] = pd.to_numeric(df.loc[both_empty, "Banco"], errors="coerce") + 15
+                df.loc[both_empty, "Coordena real inicio Z"] = df.loc[both_empty, "Coordenadas diseño Z"]
 
-            # STEP 6 – Clean drilling performance parameters
-            cols = {
-                "Dureza": {"fill_zero": True, "delete_if_zero": False},
-                "RPM de perforacion": {"fill_zero": True, "delete_if_zero": False},
-                "Velocidad de penetracion (m/minutos)": {"fill_zero": False, "delete_if_zero": True},
-                "Pulldown KN": {"fill_zero": False, "delete_if_zero": True},
+            # Remove negatives
+            for col in ["Coordenadas diseño X", "Coordenadas diseño Y", "Coordenadas diseño Z",
+                        "Coordenada real inicioX", "Coordenada real inicio Y", "Coordena real inicio Z"]:
+                if col in df.columns:
+                    df = df[df[col] >= 0]
+
+            steps_done.append(f"✅ Cleaned Coordinates (removed {before_rows - len(df)} invalid rows).")
+
+            # STEP 5 — DRILLING PARAMETERS
+            rules = {
+                "Dureza": {"fill_zero": True, "delete_zero": False},
+                "RPM de perforacion": {"fill_zero": True, "delete_zero": False},
+                "Velocidad de penetracion (m/minutos)": {"fill_zero": False, "delete_zero": True},
+                "Pulldown KN": {"fill_zero": False, "delete_zero": True},
             }
 
-            existing_cols = [c for c in cols.keys() if c in df.columns]
             before = len(df)
-
-            for col, rule in cols.items():
+            for col, rule in rules.items():
                 if col not in df.columns:
                     steps_done.append(f"⚠️ Column '{col}' not found.")
                     continue
-
                 df[col] = pd.to_numeric(df[col], errors="coerce")
                 if rule["fill_zero"]:
-                    df[col] = df[col].fillna(0)
-                if rule["delete_if_zero"]:
+                    df[col].fillna(0, inplace=True)
+                if rule["delete_zero"]:
                     df = df[df[col].notna() & (df[col] != 0)]
 
-            deleted = before - len(df)
-            steps_done.append(f"✅ Cleaned drilling parameters: removed {deleted} invalid rows and filled missing hardness/RPM with 0.")
+            steps_done.append(f"✅ Cleaned drilling parameters (removed {before - len(df)} invalid rows).")
 
-            # STEP 7 – Remove empty or zero Largo de pozo real
+            # STEP 6 — LARGO DE POZO REAL
             if "Largo de pozo real" in df.columns:
                 before_len = len(df)
+                df["Largo de pozo real"] = pd.to_numeric(df["Largo de pozo real"], errors="coerce")
                 df = df[df["Largo de pozo real"].notna() & (df["Largo de pozo real"] > 0)]
-                deleted_len = before_len - len(df)
-                steps_done.append(f"✅ Removed {deleted_len} empty/zero 'Largo de pozo real' rows.")
+                steps_done.append(f"✅ Removed {before_len - len(df)} rows with empty/zero Largo de pozo real.")
             else:
                 steps_done.append("⚠️ Column 'Largo de pozo real' not found.")
 
-            # STEP 8 – Categoria de Pozo
-            df["Categoria de pozo"] = df["Categoria de pozo"].replace({"Produccion": 1, "Buffer": 2, "Auxiliar": 3})
-            steps_done.append("✅ Mapped Categoria de Pozo to numeric codes.")
-
-            # STEP 9 – Filter only 'Drilled' Estatus
+            # STEP 7 — ESTATUS + CATEGORIA
             if "Estatus de pozo" in df.columns:
                 before = len(df)
-                df = df[df["Estatus de pozo"].astype(str).str.lower() == "drilled"]
-                removed = before - len(df)
-                steps_done.append(f"✅ Filtered 'Estatus de pozo': kept only 'Drilled' ({removed} removed).")
-            else:
-                steps_done.append("⚠️ Column 'Estatus de pozo' not found.")
+                df = df[df["Estatus de pozo"].astype(str).str.strip().str.lower() == "drilled"]
+                steps_done.append(f"✅ Kept only 'Drilled' status (removed {before - len(df)} rows).")
+            if "Categoria de pozo" in df.columns:
+                df["Categoria de pozo"] = df["Categoria de pozo"].replace({"Produccion": 1, "Buffer": 2, "Auxiliar": 3})
+                steps_done.append("✅ Coded Categoria de pozo (1–3).")
 
-            # STEP 10 – Operator Matching (Advanced Logic)
-            operators_path = r"XENERGY-data-center/ES_Operators.xlsx"
+            # STEP 8 — OPERATOR MAPPING
+            ops_path = r"XENERGY-data-center/ES_Operators.xlsx"
 
-            def _norm_ws(s):
-                return unicodedata.normalize("NFKD", str(s or "").strip().lower())
+            def normalize_text(s):
+                return re.sub(r"\s+", "", unicodedata.normalize("NFKD", str(s).lower().strip()))
 
-            def _nospace(s):
-                return re.sub(r"\s+", "", s)
+            if os.path.exists(ops_path):
+                ops = pd.read_excel(ops_path)
+                ops = ops.dropna(subset=["Nombre", "Codigo"])
+                operator_map = dict(zip(ops["Nombre"].apply(normalize_text), ops["Codigo"]))
+                new_ops = {}
 
-            if os.path.exists(operators_path):
-                ops = pd.read_excel(operators_path)
-                _operator_names = dict(zip(ops["Nombre"].astype(str), ops["Codigo"]))
-                _ops_index = []
-                for n, c in _operator_names.items():
-                    ws = _norm_ws(n)
-                    rec = {
-                        "name": n,
-                        "code": c,
-                        "nospace": _nospace(ws),
-                        "tokens": set(ws.split()),
-                        "ntok": len(ws.split()),
-                    }
-                    _ops_index.append(rec)
-
-                new_operators = {}
-
-                def _best_operator_match(raw_value):
-                    if pd.isna(raw_value) or str(raw_value).strip() == "":
-                        return 75, "empty→75"
-
-                    s_ws = _norm_ws(raw_value)
-                    s_ns = _nospace(s_ws)
-                    s_tokens = set(s_ws.split())
-
-                    # 1️⃣ Exact nospace
-                    for rec in _ops_index:
-                        if s_ns == rec["nospace"]:
-                            return rec["code"], "exact-nospace"
-
-                    # 2️⃣ Token coverage
-                    best = None
-                    for rec in _ops_index:
-                        req = rec["tokens"]
-                        have = sum(1 for t in req if t in s_tokens)
-                        need = 2 if rec["ntok"] >= 3 else rec["ntok"]
-                        if have >= need:
-                            cov = have / max(rec["ntok"], 1)
-                            sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
-                            score = 0.7 * cov + 0.3 * sim
-                            if best is None or score > best["score"]:
-                                best = {"code": rec["code"], "score": score}
-                    if best and best["score"] >= 0.80:
-                        return best["code"], "token-cover"
-
-                    # 3️⃣ Fuzzy fallback
-                    best = None
-                    for rec in _ops_index:
-                        sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
-                        if best is None or sim > best["sim"]:
-                            best = {"code": rec["code"], "sim": sim}
-                    if best and best["sim"] >= 0.90:
-                        return best["code"], f"fuzzy({best['sim']:.2f})"
-
-                    # 4️⃣ New operator
-                    norm_name = _nospace(s_ws)
-                    for known in new_operators.keys():
-                        if SequenceMatcher(None, norm_name, _nospace(_norm_ws(known))).ratio() >= 0.95:
-                            return new_operators[known], "duplicate-new"
-
-                    if not hasattr(_best_operator_match, "next_code"):
-                        _best_operator_match.next_code = max(_operator_names.values()) + 1
-
-                    new_code = _best_operator_match.next_code
-                    _best_operator_match.next_code += 1
-
-                    new_operators[raw_value] = new_code
-                    _operator_names[raw_value] = new_code
-                    return new_code, "new-operator"
+                def best_operator(value):
+                    if pd.isna(value) or not str(value).strip():
+                        return 75
+                    val_norm = normalize_text(value)
+                    if val_norm in operator_map:
+                        return operator_map[val_norm]
+                    # fuzzy
+                    best, score = None, 0
+                    for k, code in operator_map.items():
+                        sim = SequenceMatcher(None, val_norm, k).ratio()
+                        if sim > score:
+                            best, score = code, sim
+                    if score >= 0.85:
+                        return best
+                    # new operator
+                    next_code = max(operator_map.values()) + 1 if operator_map else 100
+                    new_ops[value] = next_code
+                    operator_map[val_norm] = next_code
+                    return next_code
 
                 if "Operador" in df.columns:
-                    df["Operador_code"] = df["Operador"].apply(lambda x: _best_operator_match(x)[0])
-                    df["Operador"] = df["Operador_code"]
-                    df.drop(columns=["Operador_code"], inplace=True)
-                    if new_operators:
-                        st.info(f"🆕 New operators detected: {len(new_operators)}")
-                        st.dataframe(pd.DataFrame(list(new_operators.items()), columns=["Nombre", "Codigo"]), use_container_width=True)
-                    steps_done.append("✅ Operator matching completed.")
+                    df["Operador"] = df["Operador"].apply(best_operator)
+                    if new_ops:
+                        st.info(f"🆕 New operators found ({len(new_ops)}):")
+                        st.dataframe(pd.DataFrame(list(new_ops.items()), columns=["Nombre", "Codigo"]), use_container_width=True)
+                    steps_done.append("✅ Operator mapping completed.")
                 else:
                     steps_done.append("⚠️ Column 'Operador' not found.")
             else:
-                steps_done.append(f"⚠️ ES_Operators.xlsx not found at {operators_path}")
-# STEP 12 – Broca Matching (from Brocas.xlsx)
-brocas_path = r"XENERGY-data-center/Brocas.xlsx"
+                steps_done.append(f"⚠️ File not found: {ops_path}")
 
-if os.path.exists(brocas_path):
-    try:
-        brocas_df = pd.read_excel(brocas_path)
-        brocas_df = brocas_df.dropna(subset=["Nombre", "Codigo"])
-        broca_map = dict(zip(brocas_df["Nombre"].astype(str).str.lower().str.strip(), brocas_df["Codigo"]))
+            # STEP 9 — BROCA MAPPING
+            brocas_path = r"XENERGY-data-center/Brocas.xlsx"
+            if os.path.exists(brocas_path):
+                brocas_df = pd.read_excel(brocas_path).dropna(subset=["Nombre", "Codigo"])
+                broca_map = dict(zip(brocas_df["Nombre"].astype(str).str.lower().str.strip(), brocas_df["Codigo"]))
 
-        def match_broca(value):
-            if pd.isna(value) or str(value).strip() == "":
-                return 0
+                def match_broca(value):
+                    if pd.isna(value) or not str(value).strip():
+                        return 0
+                    v = str(value).lower().strip()
+                    if v in broca_map:
+                        return broca_map[v]
+                    for k, code in broca_map.items():
+                        if k in v or v in k:
+                            return code
+                    m = re.search(r"(?:s|sj|cn)?(\d{2,3})", v)
+                    if m:
+                        return int(m.group(1))
+                    return 0
 
-            val = str(value).strip().lower()
-            # Exact match
-            if val in broca_map:
-                return broca_map[val]
+                if "Broca" in df.columns:
+                    df["Broca"] = df["Broca"].apply(match_broca).astype(int)
+                    steps_done.append("✅ Broca references matched using Brocas.xlsx and pattern extraction.")
+                else:
+                    steps_done.append("⚠️ Column 'Broca' not found.")
+            else:
+                steps_done.append(f"⚠️ File not found: {brocas_path}")
 
-            # Fuzzy match (if similar)
-            for key in broca_map.keys():
-                if key in val or val in key:
-                    return broca_map[key]
+            # STEP 10 — MODO DE PERFORACION
+            if "Modo de perforacion" in df.columns:
+                df["Modo de perforacion"] = df["Modo de perforacion"].replace({"Manual": 1, "Autonomous": 2, "Teleremote": 3})
+                steps_done.append("✅ Mapped Modo de perforacion (Manual=1, Autonomous=2, Teleremote=3).")
 
-            # Pattern-based extraction (s44, sj44, cn44 → 44)
-            m = re.search(r"(?:s|sj|cn)?(\d{2,3})", val)
-            if m:
-                return int(m.group(1))
-
-            # Default
-            return 0
-
-        if "Broca" in df.columns:
-            df["Broca_code"] = df["Broca"].apply(match_broca)
-            df["Broca"] = df["Broca_code"].astype(int)
-            df.drop(columns=["Broca_code"], inplace=True)
-
-            steps_done.append("✅ Matched Broca references using Brocas.xlsx and pattern extraction.")
-        else:
-            steps_done.append("⚠️ Column 'Broca' not found — skipped Broca mapping.")
-
-    except Exception as e:
-        steps_done.append(f"⚠️ Broca mapping error: {e}")
-else:
-    steps_done.append(f"⚠️ Brocas.xlsx not found at {brocas_path}")
-
-            # STEP 11 – Modo de perforacion mapping
-            df["Modo de perforacion"] = df["Modo de perforacion"].replace({"Manual": 1, "Autonomous": 2, "Teleremote": 3})
-            steps_done.append("✅ Mapped Modo de perforacion to standardized codes.")
-
-            # --- Display Steps
+            # Show steps
             for step in steps_done:
                 st.markdown(
-                    f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                    f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
-                    unsafe_allow_html=True
+                    f"<div style='background:#eefaf3;padding:8px 10px;border-radius:6px;margin-bottom:6px;color:#137333;font-weight:500;'>{step}</div>",
+                    unsafe_allow_html=True,
                 )
 
         # ==========================================================
-        # AFTER CLEANING
+        # FINAL OUTPUT
         # ==========================================================
         st.markdown("---")
         st.subheader("✅ Cleaned Data Preview")
-        st.dataframe(df.head(15), use_container_width=True)
+        st.dataframe(df.head(20), use_container_width=True)
         st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
 
         # ==========================================================
@@ -360,51 +253,32 @@ else:
         # ==========================================================
         st.markdown("---")
         st.subheader("💾 Export Cleaned File")
-
-        option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
-        if option == "⬇️ Download All Columns":
-            export_df = df
-        else:
-            selected_columns = st.multiselect(
-                "Select columns (drag to reorder):",
-                options=list(df.columns),
-                default=list(df.columns)
-            )
-            export_df = df[selected_columns] if selected_columns else df
+        export_df = df
 
         excel_buffer = io.BytesIO()
         export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
         excel_buffer.seek(0)
-
         csv_buffer = io.StringIO()
         export_df.to_csv(csv_buffer, index=False)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                "📘 Download Excel File",
-                excel_buffer,
-                file_name="Escondida_Autonomia_Cleaned.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        with col2:
-            st.download_button(
-                "📗 Download CSV File",
-                csv_buffer.getvalue(),
-                file_name="Escondida_Autonomia_Cleaned.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        c1, c2 = st.columns(2)
+        with c1:
+            st.download_button("📘 Download Excel", excel_buffer, "Escondida_Autonomia_Cleaned.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with c2:
+            st.download_button("📗 Download CSV", csv_buffer.getvalue(), "Escondida_Autonomia_Cleaned.csv",
+                               mime="text/csv", use_container_width=True)
 
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.caption("Built by Maxam - Omar El Kendi -")
+        st.caption("Built by Maxam — Omar El Kendi")
 
     except Exception as e:
         st.error(f"⚠️ Error processing file: {e}")
 
 else:
-    st.info("📂 Please upload an Excel file to begin.")
+    st.info("📂 Please upload an Excel or CSV file to begin.")
+
+
 
 
 
