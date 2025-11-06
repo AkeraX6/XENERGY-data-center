@@ -152,7 +152,32 @@ if uploaded_file is not None:
             deleted_rows = before_rows - len(df)
             steps_done.append(f"✅ Cleaned Coordinates (removed {deleted_rows} invalid/negative rows).")
 
-            # STEP 6 – Remove empty or zero Largo de pozo real
+            # STEP 6 – Clean drilling performance parameters
+            cols = {
+                "Dureza": {"fill_zero": True, "delete_if_zero": False},
+                "RPM de perforacion": {"fill_zero": True, "delete_if_zero": False},
+                "Velocidad de penetracion (m/minutos)": {"fill_zero": False, "delete_if_zero": True},
+                "Pulldown KN": {"fill_zero": False, "delete_if_zero": True},
+            }
+
+            existing_cols = [c for c in cols.keys() if c in df.columns]
+            before = len(df)
+
+            for col, rule in cols.items():
+                if col not in df.columns:
+                    steps_done.append(f"⚠️ Column '{col}' not found.")
+                    continue
+
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+                if rule["fill_zero"]:
+                    df[col] = df[col].fillna(0)
+                if rule["delete_if_zero"]:
+                    df = df[df[col].notna() & (df[col] != 0)]
+
+            deleted = before - len(df)
+            steps_done.append(f"✅ Cleaned drilling parameters: removed {deleted} invalid rows and filled missing hardness/RPM with 0.")
+
+            # STEP 7 – Remove empty or zero Largo de pozo real
             if "Largo de pozo real" in df.columns:
                 before_len = len(df)
                 df = df[df["Largo de pozo real"].notna() & (df["Largo de pozo real"] > 0)]
@@ -161,11 +186,11 @@ if uploaded_file is not None:
             else:
                 steps_done.append("⚠️ Column 'Largo de pozo real' not found.")
 
-            # STEP 7 – Categoria de Pozo
+            # STEP 8 – Categoria de Pozo
             df["Categoria de pozo"] = df["Categoria de pozo"].replace({"Produccion": 1, "Buffer": 2, "Auxiliar": 3})
             steps_done.append("✅ Mapped Categoria de Pozo to numeric codes.")
 
-            # STEP 8 – Filter only 'Drilled' Estatus
+            # STEP 9 – Filter only 'Drilled' Estatus
             if "Estatus de pozo" in df.columns:
                 before = len(df)
                 df = df[df["Estatus de pozo"].astype(str).str.lower() == "drilled"]
@@ -174,7 +199,7 @@ if uploaded_file is not None:
             else:
                 steps_done.append("⚠️ Column 'Estatus de pozo' not found.")
 
-            # STEP 9 – Operator Matching (Advanced Logic)
+            # STEP 10 – Operator Matching (Advanced Logic)
             operators_path = r"XENERGY-data-center/ES_Operators.xlsx"
 
             def _norm_ws(s):
@@ -266,7 +291,7 @@ if uploaded_file is not None:
             else:
                 steps_done.append(f"⚠️ ES_Operators.xlsx not found at {operators_path}")
 
-            # STEP 10 – Modo de perforacion mapping
+            # STEP 11 – Modo de perforacion mapping
             df["Modo de perforacion"] = df["Modo de perforacion"].replace({"Manual": 1, "Autonomous": 2, "Teleremote": 3})
             steps_done.append("✅ Mapped Modo de perforacion to standardized codes.")
 
@@ -336,5 +361,6 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+
 
 
