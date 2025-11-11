@@ -10,7 +10,10 @@ st.markdown(
     "<h2 style='text-align:center;'>Escondida — QAQC Data Filter</h2>",
     unsafe_allow_html=True
 )
-st.markdown("<p style='text-align:center; color:gray;'>Automated cleaning and preparation of QAQC drilling data.</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center; color:gray;'>Automated cleaning and preparation of QAQC drilling data.</p>",
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
 # 🔙 Back to Menu
@@ -26,8 +29,8 @@ uploaded_file = st.file_uploader("📤 Upload your file", type=["xlsx", "xls", "
 if uploaded_file is not None:
     file_name = uploaded_file.name.lower()
 
+    # Smart CSV reader with delimiter detection
     def read_csv_smart(file_obj):
-        """Detect delimiter automatically for CSVs"""
         sample = file_obj.read(8192).decode(errors="replace")
         file_obj.seek(0)
         try:
@@ -46,6 +49,7 @@ if uploaded_file is not None:
                 file_obj.seek(0)
                 return pd.read_csv(file_obj)
 
+    # Read file
     if file_name.endswith(".csv"):
         df = read_csv_smart(uploaded_file)
     else:
@@ -82,17 +86,19 @@ if uploaded_file is not None:
         else:
             steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
 
-        # STEP 3 – Extract Level, Phase (Expansion), and Grid
+        # STEP 3 – Extract Level and Phase from Blast
         if "Blast" in df.columns:
             def extract_level(text):
                 """Extract Level (4 digits at start of Blast)"""
-                if pd.isna(text): return None
+                if pd.isna(text):
+                    return None
                 m = re.match(r"(\d{4})", str(text))
                 return m.group(1) if m else None
 
             def extract_phase(text):
                 """Extract phase number from N12, PL1S, L05, S04, etc."""
-                if pd.isna(text): return None
+                if pd.isna(text):
+                    return None
                 txt = str(text).upper()
                 m = re.search(r"(?:N|PL|L|S)(\d{1,2})", txt)
                 return m.group(1) if m else None
@@ -102,78 +108,83 @@ if uploaded_file is not None:
         else:
             steps_done.append("❌ Column 'Blast' not found (Level/Phase skipped).")
 
-        # STEP 4 – Extract Grid and Borehole number from Borehole
+        # STEP 4 – Parse Borehole (Grid + Borehole), clean, and apply B/C/D transform
         if "Borehole" in df.columns:
-            def parse_borehole(val):
-                """Extract Grid and Borehole number from value like 5001_255"""
+            def parse_borehole_keep_letter(val):
+                """
+                Accepts:
+                  5001_255   -> Grid=5001,  BH='255'
+                  6001_B267  -> Grid=6001,  BH='B267'
+                  3040-C012  -> Grid=3040,  BH='C012'
+                  2995 D004  -> Grid=2995,  BH='D004'
+                """
                 if pd.isna(val) or str(val).strip() == "":
                     return (None, None)
                 s = str(val).strip()
-                m = re.match(r"(\d{3,4})\D+(\d+)$", s)
+
+                m = re.match(r"^\s*(\d{3,4})[_\-\s]+([A-Za-z]?\d+)\s*$", s)
                 if m:
-                    grid = m.group(1)
-                    borehole = m.group(2)
-                    return (grid, borehole)
+                    return (m.group(1), m.group(2))
+
+                m2 = re.match(r"^\s*([A-Za-z]?\d+)\s*$", s)
+                if m2:
+                    return (None, m2.group(1))
+
                 nums = re.findall(r"\d+", s)
-                if len(nums) == 1:
-                    return (None, nums[0])
+                if len(nums) >= 1:
+                    return (None, nums[-1])
                 return (None, None)
 
-            parsed = df["Borehole"].apply(parse_borehole)
+            parsed = df["Borehole"].apply(parse_borehole_keep_letter)
             df["Grid"] = parsed.apply(lambda x: x[0])
             df["Borehole"] = parsed.apply(lambda x: x[1])
 
-            # Remove Boreholes containing aux or letters (a1, a2, a, etc.)
+            # Drop Boreholes with 'aux' or invalid letters
             before_bh = len(df)
             bh_str = df["Borehole"].astype(str)
             mask_aux = bh_str.str.contains(r"aux", case=False, na=False)
-            mask_letters = bh_str.str.contains(r"[A-Za-z]", na=False)
-            df = df[~(mask_aux | mask_letters)]
+            mask_bad = ~bh_str.str.fullmatch(r"[BCD]?\d+", na=False)
+            df = df[~(mask_aux | mask_bad)]
             deleted_bh = before_bh - len(df)
-            steps_done.append(f"🗑️ Removed {deleted_bh} Boreholes containing 'aux' or letters (a1, a2, a...).")
 
-            # Apply Pozo-style transformation (B/C/D logic)
-            def transform_pozo(val):
-                s = str(val).strip()
+            # Apply B/C/D transformation
+            def transform_pozo(token):
+                s = str(token).strip().upper()
                 if s.startswith("B"):
                     return "100000" + s[1:]
-                elif s.startswith("C"):
+                if s.startswith("C"):
                     return "200000" + s[1:]
-                elif s.startswith("D"):
+                if s.startswith("D"):
                     return s[1:]
                 return s
 
-            df["Borehole"] = df["Borehole"].apply(lambda v: transform_pozo(v) if not pd.isna(v) else v)
-
-            # Convert to numeric
+            df["Borehole"] = df["Borehole"].apply(transform_pozo)
             df["Borehole"] = pd.to_numeric(df["Borehole"], errors="coerce")
+            df = df[df["Borehole"].notna()]
+            df["Borehole"] = df["Borehole"].astype(int)
 
-            # Fill missing Boreholes sequentially within each Blast
+            # Fill missing Boreholes within each Blast
             if "Blast" in df.columns:
-                def fill_boreholes(group):
+                def fill_bh(group):
                     counter = 10000
-                    filled = []
+                    out = []
                     for v in group["Borehole"]:
                         if pd.isna(v):
-                            filled.append(counter)
+                            out.append(counter)
                             counter += 1
                         else:
-                            filled.append(v)
-                    group["Borehole"] = filled
+                            out.append(v)
+                    group["Borehole"] = out
                     return group
-                df = df.groupby("Blast", group_keys=False).apply(fill_boreholes)
+                df = df.groupby("Blast", group_keys=False).apply(fill_bh)
 
-            # Reorder: Blast → Level → Phase → Grid → rest
+            # Reorder columns
             cols = list(df.columns)
-            for c in ["Level", "Phase", "Grid"]:
-                if c in cols:
-                    cols.remove(c)
-            if "Blast" in cols:
-                idx = cols.index("Blast")
-                cols[idx + 1:idx + 1] = ["Level", "Phase", "Grid"]
-                df = df[cols]
+            desired = [c for c in ["Blast", "Level", "Phase", "Grid", "Borehole"] if c in cols]
+            others = [c for c in cols if c not in desired]
+            df = df[desired + others]
 
-            steps_done.append("✅ Extracted Level (from Blast), Phase (Fase), and Grid (from Borehole).")
+            steps_done.append(f"✅ Borehole parsed & transformed (B/C/D logic). Removed {deleted_bh} invalid AUX/letter rows.")
         else:
             steps_done.append("❌ Column 'Borehole' not found.")
 
@@ -208,7 +219,7 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ 'Asset' column not found.")
 
-        # --- Display Steps
+        # --- Display Steps ---
         for s in steps_done:
             st.markdown(
                 f"<div style='background:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
@@ -217,7 +228,7 @@ if uploaded_file is not None:
             )
 
     # ==========================================================
-    # AFTER CLEANING — RESULTS
+    # AFTER CLEANING
     # ==========================================================
     st.markdown("---")
     st.subheader("✅ Data After Cleaning & Transformation")
@@ -234,22 +245,23 @@ if uploaded_file is not None:
     if opt == "⬇️ Download All Columns":
         export_df = df
     else:
-        sel_cols = st.multiselect("Select columns (drag to reorder):", list(df.columns), default=list(df.columns))
+        sel_cols = st.multiselect("Select columns:", list(df.columns), default=list(df.columns))
         export_df = df[sel_cols] if sel_cols else df
 
-    # Excel + CSV buffers
+    # Prepare download buffers
     excel_buf = io.BytesIO()
     export_df.to_excel(excel_buf, index=False, engine="openpyxl")
     excel_buf.seek(0)
+
     csv_buf = io.StringIO()
     export_df.to_csv(csv_buf, index=False)
 
-    c1, c2 = st.columns(2)
-    with c1:
+    col1, col2 = st.columns(2)
+    with col1:
         st.download_button("📘 Download Excel File", excel_buf, "Escondida_QAQC_Cleaned.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            use_container_width=True)
-    with c2:
+    with col2:
         st.download_button("📗 Download CSV File", csv_buf.getvalue(), "Escondida_QAQC_Cleaned.csv",
                            mime="text/csv", use_container_width=True)
 
@@ -258,6 +270,8 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
+
 
 
 
