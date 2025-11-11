@@ -24,7 +24,6 @@ if st.button("⬅️ Back to Menu", key="back_esqaqc"):
 uploaded_file = st.file_uploader("📤 Upload your file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
-    # --- READ FILE (Excel or CSV) with smart delimiter detection ---
     file_name = uploaded_file.name.lower()
 
     def read_csv_smart(file_obj):
@@ -63,7 +62,7 @@ if uploaded_file is not None:
     # ==========================================================
     with st.expander("⚙️ See Processing Steps", expanded=False):
 
-        # STEP 1 – Clean invalid Density values (empty, letters, symbols, negatives, zero)
+        # STEP 1 – Clean invalid Density values
         if "Density" in df.columns:
             before = len(df)
             df["Density_clean"] = pd.to_numeric(df["Density"], errors="coerce")
@@ -83,40 +82,87 @@ if uploaded_file is not None:
         else:
             steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
 
-        # STEP 3 – Extract Nivel, Expansion, and Grid from Blast
+        # STEP 3 – Expansion & Grid from Blast; Nivel from Borehole
         if "Blast" in df.columns:
-
-            def extract_nivel(text):
-                if pd.isna(text):
-                    return None
-                m = re.search(r"(\d{4})", str(text))
-                return m.group(1) if m else None
-
             def extract_expansion(text):
-                if pd.isna(text):
-                    return None
+                if pd.isna(text): return None
                 txt = str(text).upper()
-                # Match patterns like N12, PL1, L05, etc.
                 m = re.search(r"(?:N|PL|L)(\d{1,2})", txt)
                 return m.group(1) if m else None
 
             def extract_grid(text):
-                if pd.isna(text):
-                    return None
+                if pd.isna(text): return None
                 txt = str(text)
-                # Extract 4 consecutive digits after an underscore (e.g., _5006_)
                 m = re.search(r"_(\d{4})_", txt)
-                if m:
-                    return m.group(1)
-                # fallback — first 4-digit number after an underscore
+                if m: return m.group(1)
                 m2 = re.search(r"_(\d{4})", txt)
                 return m2.group(1) if m2 else None
 
-            df["Nivel"] = df["Blast"].apply(extract_nivel)
             df["Expansion"] = df["Blast"].apply(extract_expansion)
             df["Grid"] = df["Blast"].apply(extract_grid)
+        else:
+            steps_done.append("❌ Column 'Blast' not found (Expansion/Grid skipped).")
 
-            # Reorder: Blast → Nivel → Expansion → Grid → rest
+        # STEP 4 – Nivel & Borehole parsing + cleaning + Pozo transformation
+        if "Borehole" in df.columns:
+            def parse_borehole_pair(val):
+                """Extract Nivel and Borehole (e.g., '5003_16' → Nivel=5003, Borehole=16)."""
+                if pd.isna(val) or str(val).strip() == "": return (None, None)
+                s = str(val).strip()
+                m = re.search(r"(\d{3,4})\D+(\d{1,4})$", s)
+                if m:
+                    return (m.group(1), m.group(2))
+                nums = re.findall(r"\d+", s)
+                if len(nums) == 1:
+                    return (None, nums[0])
+                return (None, None)
+
+            parsed = df["Borehole"].apply(parse_borehole_pair)
+            df["Nivel"] = parsed.apply(lambda x: x[0])
+            df["Borehole"] = parsed.apply(lambda x: x[1])
+
+            # Remove Boreholes containing aux or letters (a1, a2, a, etc.)
+            before_bh = len(df)
+            bh_str = df["Borehole"].astype(str)
+            mask_aux = bh_str.str.contains(r"aux", case=False, na=False)
+            mask_letters = bh_str.str.contains(r"[A-Za-z]", na=False)
+            df = df[~(mask_aux | mask_letters)]
+            deleted_bh = before_bh - len(df)
+            steps_done.append(f"🗑️ Removed {deleted_bh} rows with Borehole marked as 'aux' or containing letters (a1, a2, a...).")
+
+            # Convert to numeric
+            df["Borehole"] = pd.to_numeric(df["Borehole"], errors="coerce")
+
+            # Fill missing Boreholes per Blast
+            if "Blast" in df.columns:
+                def fill_boreholes(group):
+                    counter = 10000
+                    new_vals = []
+                    for v in group["Borehole"]:
+                        if pd.isna(v):
+                            new_vals.append(counter)
+                            counter += 1
+                        else:
+                            new_vals.append(v)
+                    group["Borehole"] = new_vals
+                    return group
+                df = df.groupby("Blast", group_keys=False).apply(fill_boreholes)
+
+            # Apply Pozo-style transformation
+            def transform_pozo(val):
+                val_str = str(val).strip()
+                if val_str.startswith("B"):
+                    return "100000" + val_str[1:]
+                elif val_str.startswith("C"):
+                    return "200000" + val_str[1:]
+                elif val_str.startswith("D"):
+                    return val_str[1:]
+                return val_str
+
+            df["Borehole"] = df["Borehole"].apply(lambda v: transform_pozo(v) if not pd.isna(v) else v)
+            steps_done.append("✅ Applied Pozo-style transformation (B/C/D logic).")
+
+            # Reorder columns
             cols = list(df.columns)
             for c in ["Nivel", "Expansion", "Grid"]:
                 if c in cols:
@@ -126,67 +172,9 @@ if uploaded_file is not None:
                 cols[idx + 1:idx + 1] = ["Nivel", "Expansion", "Grid"]
                 df = df[cols]
 
-            steps_done.append("✅ Extracted Nivel, Expansion, and Grid columns next to Blast.")
+            steps_done.append("✅ Nivel extracted from Borehole; Expansion & Grid from Blast.")
         else:
-            steps_done.append("❌ Column 'Blast' not found in file.")
-
-        # STEP 4 – Clean and fill Borehole names + apply Pozo transformation
-        if "Borehole" in df.columns and "Blast" in df.columns:
-            before_empty = df["Borehole"].isna().sum()
-
-            def clean_borehole(val):
-                if pd.isna(val) or str(val).strip() == "":
-                    return None
-                val = str(val).strip()
-                if "_" in val:
-                    return val.split("_")[-1]
-                digits = re.findall(r"\d+", val)
-                return digits[-1] if digits else val
-
-            df["Borehole"] = df["Borehole"].apply(clean_borehole)
-
-            def fill_boreholes(group):
-                counter = 10000
-                new_bh = []
-                for val in group["Borehole"]:
-                    if pd.isna(val) or val == "":
-                        new_bh.append(str(counter))
-                        counter += 1
-                    else:
-                        new_bh.append(val)
-                group["Borehole"] = new_bh
-                return group
-
-            df = df.groupby("Blast", group_keys=False).apply(fill_boreholes)
-            after_empty = df["Borehole"].isna().sum()
-            filled = before_empty - after_empty
-            steps_done.append(f"✅ Cleaned and filled {filled} missing Borehole values.")
-
-            # --- Apply Pozo-style transformation to Borehole ---
-            def transform_pozo(val):
-                val = str(val).strip()
-                if val.startswith("B"):
-                    return "100000" + val[1:]
-                elif val.startswith("C"):
-                    return "200000" + val[1:]
-                elif val.startswith("D"):
-                    return val[1:]
-                else:
-                    return val
-
-            before_transform = df["Borehole"].copy()
-            df["Borehole"] = df["Borehole"].apply(transform_pozo)
-            changed = (before_transform != df["Borehole"]).sum()
-            steps_done.append(f"✅ Transformed {changed} Borehole values (B/C/D logic applied).")
-
-            # --- Remove Boreholes containing 'aux' (any case) ---
-            before_aux = len(df)
-            df = df[~df["Borehole"].astype(str).str.contains(r"aux", case=False, na=False)]
-            deleted_aux = before_aux - len(df)
-            steps_done.append(f"🗑️ Removed {deleted_aux} Boreholes containing 'aux'.")
-
-        else:
-            steps_done.append("⚠️ 'Borehole' or 'Blast' column missing.")
+            steps_done.append("❌ Column 'Borehole' not found.")
 
         # STEP 5 – Hole Length cross-fill
         if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
@@ -219,11 +207,11 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ 'Asset' column not found.")
 
-        # --- Display Steps ---
-        for step in steps_done:
+        # --- Display Steps
+        for s in steps_done:
             st.markdown(
-                f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
+                f"<div style='background:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
+                f"<span style='color:#137333;font-weight:500;'>{s}</span></div>",
                 unsafe_allow_html=True
             )
 
@@ -241,48 +229,35 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("💾 Export Cleaned File")
 
-    option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
-    if option == "⬇️ Download All Columns":
+    opt = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
+    if opt == "⬇️ Download All Columns":
         export_df = df
     else:
-        selected_columns = st.multiselect(
-            "Select columns (drag to reorder):",
-            options=list(df.columns),
-            default=list(df.columns)
-        )
-        export_df = df[selected_columns] if selected_columns else df
+        sel_cols = st.multiselect("Select columns (drag to reorder):", list(df.columns), default=list(df.columns))
+        export_df = df[sel_cols] if sel_cols else df
 
-    # Prepare Excel + CSV
-    excel_buffer = io.BytesIO()
-    export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
-    excel_buffer.seek(0)
+    # Excel + CSV buffers
+    excel_buf = io.BytesIO()
+    export_df.to_excel(excel_buf, index=False, engine="openpyxl")
+    excel_buf.seek(0)
+    csv_buf = io.StringIO()
+    export_df.to_csv(csv_buf, index=False)
 
-    csv_buffer = io.StringIO()
-    export_df.to_csv(csv_buffer, index=False)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            "📘 Download Excel File",
-            excel_buffer,
-            file_name="Escondida_QAQC_Cleaned.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    with col2:
-        st.download_button(
-            "📗 Download CSV File",
-            csv_buffer.getvalue(),
-            file_name="Escondida_QAQC_Cleaned.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button("📘 Download Excel File", excel_buf, "Escondida_QAQC_Cleaned.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
+    with c2:
+        st.download_button("📗 Download CSV File", csv_buf.getvalue(), "Escondida_QAQC_Cleaned.csv",
+                           mime="text/csv", use_container_width=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.caption("Built by Maxam - Omar El Kendi -")
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
 
 
 
