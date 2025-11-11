@@ -82,43 +82,45 @@ if uploaded_file is not None:
         else:
             steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
 
-        # STEP 3 – Expansion & Grid from Blast; Nivel from Borehole
+        # STEP 3 – Extract Level, Phase (Expansion), and Grid
         if "Blast" in df.columns:
-            def extract_expansion(text):
+            def extract_level(text):
+                """Extract Level (4 digits at start of Blast)"""
                 if pd.isna(text): return None
-                txt = str(text).upper()
-                m = re.search(r"(?:N|PL|L)(\d{1,2})", txt)
+                m = re.match(r"(\d{4})", str(text))
                 return m.group(1) if m else None
 
-            def extract_grid(text):
+            def extract_phase(text):
+                """Extract phase number from N12, PL1S, L05, S04, etc."""
                 if pd.isna(text): return None
-                txt = str(text)
-                m = re.search(r"_(\d{4})_", txt)
-                if m: return m.group(1)
-                m2 = re.search(r"_(\d{4})", txt)
-                return m2.group(1) if m2 else None
+                txt = str(text).upper()
+                m = re.search(r"(?:N|PL|L|S)(\d{1,2})", txt)
+                return m.group(1) if m else None
 
-            df["Expansion"] = df["Blast"].apply(extract_expansion)
-            df["Grid"] = df["Blast"].apply(extract_grid)
+            df["Level"] = df["Blast"].apply(extract_level)
+            df["Phase"] = df["Blast"].apply(extract_phase)
         else:
-            steps_done.append("❌ Column 'Blast' not found (Expansion/Grid skipped).")
+            steps_done.append("❌ Column 'Blast' not found (Level/Phase skipped).")
 
-        # STEP 4 – Nivel & Borehole parsing + cleaning + Pozo transformation
+        # STEP 4 – Extract Grid and Borehole number from Borehole
         if "Borehole" in df.columns:
-            def parse_borehole_pair(val):
-                """Extract Nivel and Borehole (e.g., '5003_16' → Nivel=5003, Borehole=16)."""
-                if pd.isna(val) or str(val).strip() == "": return (None, None)
+            def parse_borehole(val):
+                """Extract Grid and Borehole number from value like 5001_255"""
+                if pd.isna(val) or str(val).strip() == "":
+                    return (None, None)
                 s = str(val).strip()
-                m = re.search(r"(\d{3,4})\D+(\d{1,4})$", s)
+                m = re.match(r"(\d{3,4})\D+(\d+)$", s)
                 if m:
-                    return (m.group(1), m.group(2))
+                    grid = m.group(1)
+                    borehole = m.group(2)
+                    return (grid, borehole)
                 nums = re.findall(r"\d+", s)
                 if len(nums) == 1:
                     return (None, nums[0])
                 return (None, None)
 
-            parsed = df["Borehole"].apply(parse_borehole_pair)
-            df["Nivel"] = parsed.apply(lambda x: x[0])
+            parsed = df["Borehole"].apply(parse_borehole)
+            df["Grid"] = parsed.apply(lambda x: x[0])
             df["Borehole"] = parsed.apply(lambda x: x[1])
 
             # Remove Boreholes containing aux or letters (a1, a2, a, etc.)
@@ -128,51 +130,50 @@ if uploaded_file is not None:
             mask_letters = bh_str.str.contains(r"[A-Za-z]", na=False)
             df = df[~(mask_aux | mask_letters)]
             deleted_bh = before_bh - len(df)
-            steps_done.append(f"🗑️ Removed {deleted_bh} rows with Borehole marked as 'aux' or containing letters (a1, a2, a...).")
+            steps_done.append(f"🗑️ Removed {deleted_bh} Boreholes containing 'aux' or letters (a1, a2, a...).")
+
+            # Apply Pozo-style transformation (B/C/D logic)
+            def transform_pozo(val):
+                s = str(val).strip()
+                if s.startswith("B"):
+                    return "100000" + s[1:]
+                elif s.startswith("C"):
+                    return "200000" + s[1:]
+                elif s.startswith("D"):
+                    return s[1:]
+                return s
+
+            df["Borehole"] = df["Borehole"].apply(lambda v: transform_pozo(v) if not pd.isna(v) else v)
 
             # Convert to numeric
             df["Borehole"] = pd.to_numeric(df["Borehole"], errors="coerce")
 
-            # Fill missing Boreholes per Blast
+            # Fill missing Boreholes sequentially within each Blast
             if "Blast" in df.columns:
                 def fill_boreholes(group):
                     counter = 10000
-                    new_vals = []
+                    filled = []
                     for v in group["Borehole"]:
                         if pd.isna(v):
-                            new_vals.append(counter)
+                            filled.append(counter)
                             counter += 1
                         else:
-                            new_vals.append(v)
-                    group["Borehole"] = new_vals
+                            filled.append(v)
+                    group["Borehole"] = filled
                     return group
                 df = df.groupby("Blast", group_keys=False).apply(fill_boreholes)
 
-            # Apply Pozo-style transformation
-            def transform_pozo(val):
-                val_str = str(val).strip()
-                if val_str.startswith("B"):
-                    return "100000" + val_str[1:]
-                elif val_str.startswith("C"):
-                    return "200000" + val_str[1:]
-                elif val_str.startswith("D"):
-                    return val_str[1:]
-                return val_str
-
-            df["Borehole"] = df["Borehole"].apply(lambda v: transform_pozo(v) if not pd.isna(v) else v)
-            steps_done.append("✅ Applied Pozo-style transformation (B/C/D logic).")
-
-            # Reorder columns
+            # Reorder: Blast → Level → Phase → Grid → rest
             cols = list(df.columns)
-            for c in ["Nivel", "Expansion", "Grid"]:
+            for c in ["Level", "Phase", "Grid"]:
                 if c in cols:
                     cols.remove(c)
             if "Blast" in cols:
                 idx = cols.index("Blast")
-                cols[idx + 1:idx + 1] = ["Nivel", "Expansion", "Grid"]
+                cols[idx + 1:idx + 1] = ["Level", "Phase", "Grid"]
                 df = df[cols]
 
-            steps_done.append("✅ Nivel extracted from Borehole; Expansion & Grid from Blast.")
+            steps_done.append("✅ Extracted Level (from Blast), Phase (Fase), and Grid (from Borehole).")
         else:
             steps_done.append("❌ Column 'Borehole' not found.")
 
@@ -257,6 +258,8 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
+
 
 
 
