@@ -4,6 +4,7 @@ import io
 import unicodedata
 import re
 from difflib import SequenceMatcher
+from datetime import datetime
 
 # ==========================================================
 # PAGE HEADER
@@ -12,10 +13,14 @@ st.markdown(
     "<h2 style='text-align:center;'>DGM — Autonomía Data Cleaner</h2>",
     unsafe_allow_html=True
 )
-st.markdown("<p style='text-align:center; color:gray;'>Upload your main DGM file + an Operators mapping file. The app cleans data, maps operators (fuzzy), flags new names, and exports.</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center; color:gray;'>Upload your main DGM data and an Operators mapping file. "
+    "The app maps operators (fuzzy), auto-assigns IDs to new names, cleans fields, and exports.</p>",
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
-# 🔙 Back to Menu (optional)
+# (Optional) Back button
 if st.button("⬅️ Back to Menu", key="back_dgmauto"):
     st.session_state.page = "dashboard"
     st.rerun()
@@ -24,10 +29,10 @@ if st.button("⬅️ Back to Menu", key="back_dgmauto"):
 # FILE UPLOADS
 # ==========================================================
 st.subheader("📤 Upload Files")
-col_u1, col_u2 = st.columns(2)
-with col_u1:
+c1, c2 = st.columns(2)
+with c1:
     data_file = st.file_uploader("Main DGM Data (Excel/CSV)", type=["xlsx", "xls", "csv"], key="data_file")
-with col_u2:
+with c2:
     ops_file = st.file_uploader("Operators Mapping (Excel/CSV)", type=["xlsx", "xls", "csv"], key="ops_file")
 
 if not data_file or not ops_file:
@@ -80,9 +85,6 @@ st.subheader("📄 Original Data (Before Cleaning)")
 st.dataframe(df.head(10), use_container_width=True)
 st.info(f"📏 Total rows before cleaning: {len(df)}")
 
-st.subheader("👥 Operator Mapping File (Preview)")
-st.dataframe(ops_df.head(10), use_container_width=True)
-
 # Detect operator file columns (name + id)
 name_col = find_col_by_hints(ops_df, "operator", "operador", "name", "nombre")
 id_col   = find_col_by_hints(ops_df, "id", "codigo", "code")
@@ -91,13 +93,13 @@ if not name_col or not id_col:
     st.error("❌ Could not detect Operator mapping columns. Please ensure the file has columns like 'Operator_Name' and 'ID'.")
     st.stop()
 
-# Build canonical operator dict from uploaded mapping file
 ops_df = ops_df[[name_col, id_col]].copy()
-ops_df = ops_df.dropna(subset=[name_col, id_col])
+ops_df = ops_df.dropna(subset=[name_col])
 ops_df[id_col] = pd.to_numeric(ops_df[id_col], errors="coerce")
 ops_df = ops_df.dropna(subset=[id_col])
+ops_df[id_col] = ops_df[id_col].astype(int)
 
-# Index for matching
+# Build canonical operator index from uploaded mapping file
 ops_index = []
 for _, row in ops_df.iterrows():
     full = str(row[name_col]).strip()
@@ -112,18 +114,34 @@ for _, row in ops_df.iterrows():
         "ntok": len(ws.split())
     })
 
+# Prepare for dynamic additions
+max_existing_id = ops_df[id_col].max() if not ops_df.empty else 0
+next_code = max_existing_id + 1
+# Maps normalized nospace name -> assigned code for unknowns this run
+new_ops_norm_to_code = {}
+# To build an updated operator file: start from existing mapping
+updated_ops_records = ops_df[[name_col, id_col]].copy()
+
 # ==========================================================
-# MATCHING: map raw operator -> ID (X if unknown)
+# MATCHING: map raw operator -> ID (sequential for unknowns)
 # ==========================================================
-def best_operator_code(raw_value: str):
-    """Return (code or 'X', reason). No dynamic assignment — unknowns → 'X' and listed."""
+def best_operator_code_assign(raw_value: str):
+    """
+    Return (code, reason).
+    Unknown names get new sequential ID (starting at max_existing_id+1),
+    reused if the normalized (accent-insensitive, nospace) string repeats.
+    """
+    global next_code
+
+    # Treat empty as 25 (your rule)
     if pd.isna(raw_value) or str(raw_value).strip() == "":
-        return 25, "empty→25"  # keep your rule for empty
+        return 25, "empty→25"
+
     s_ws = strip_accents_lower_spaces(raw_value)
     s_ns = nospace(s_ws)
     s_tokens = set(s_ws.split())
 
-    # 1) Exact nospace
+    # 1) Exact nospace match
     for rec in ops_index:
         if s_ns == rec["ns"]:
             return rec["code"], "exact-nospace"
@@ -152,8 +170,24 @@ def best_operator_code(raw_value: str):
     if best and best["sim"] >= 0.90:
         return best["code"], f"fuzzy({best['sim']:.2f})"
 
-    # 4) Unknown → 'X'
-    return "X", "unknown"
+    # 4) Unknown → assign sequential code (dedupe by normalized name)
+    if s_ns in new_ops_norm_to_code:
+        return new_ops_norm_to_code[s_ns], "new-reuse"
+    new_code = next_code
+    next_code += 1
+    new_ops_norm_to_code[s_ns] = new_code
+
+    # Add to ops_index for subsequent matches, and to updated list for output
+    ops_index.append({
+        "code": new_code,
+        "full_name": str(raw_value).strip(),
+        "ws": s_ws,
+        "ns": s_ns,
+        "tokens": s_ws.split(),
+        "ntok": len(s_ws.split())
+    })
+    updated_ops_records.loc[len(updated_ops_records)] = {name_col: str(raw_value).strip(), id_col: new_code}
+    return new_code, "new-assign"
 
 # ==========================================================
 # OTHER TRANSFORM HELPERS
@@ -224,7 +258,7 @@ def cross_fill_pair(df_in, col1, col2):
 # ==========================================================
 # CLEANING PIPELINE
 # ==========================================================
-# Remove duplicated and numbered duplicate cols; tidy headers
+# Remove duplicated and suffix-duplicated cols; tidy headers
 df = df.loc[:, ~df.columns.duplicated()]
 df = df.loc[:, ~df.columns.str.contains(r"\.\d+$", regex=True)]
 df.columns = (
@@ -245,7 +279,7 @@ steps_done = []
 deletes_log = {}
 total_deleted = 0
 
-# 1) Delete empty Tiempo Perforación rows
+# 1) Delete rows with empty Tiempo Perforación [hrs]
 if "Tiempo Perforación [hrs]" in df.columns:
     before = len(df)
     df = df.dropna(subset=["Tiempo Perforación [hrs]"])
@@ -261,19 +295,28 @@ if "Turno" in df.columns:
     df["Turno"] = df["Turno"].apply(convert_turno)
     steps_done.append("• Converted Turno (Día→1, Noche→2).")
 
-# 3) Operator mapping using uploaded mapping file (unknown → 'X')
-new_unknown_ops = {}
+# 3) Operator mapping using uploaded mapping file (unknowns get sequential IDs)
 op_col = find_col_by_hints(df, "operador", "operator")
+new_ops_added_count = 0
 if op_col:
     def map_op(v):
-        code, why = best_operator_code(v)
-        if code == "X":
-            key = str(v).strip()
-            if key:
-                new_unknown_ops[key] = True
-        return code
-    df[op_col] = df[op_col].apply(map_op)
-    steps_done.append(f"• Mapped Operators using uploaded mapping file (unknowns set to 'X').")
+        nonlocal_next_added = False  # local flag to count unique additions
+        code, why = best_operator_code_assign(v)
+        # count only genuinely new assignments (not reuses)
+        if why == "new-assign":
+            nonlocal_next_added = True
+        return code, nonlocal_next_added
+
+    added = 0
+    codes = []
+    for val in df[op_col].tolist():
+        code, is_new = map_op(val)
+        codes.append(code)
+        if is_new:
+            added += 1
+    df[op_col] = codes
+    new_ops_added_count = added
+    steps_done.append("• Mapped Operators using uploaded mapping file (unknowns assigned next sequential IDs).")
 else:
     steps_done.append("• Operator column not found — skipping operator mapping.")
 
@@ -288,7 +331,7 @@ if "Banco" in df.columns:
 # 5) Perforadora standardization
 if "Perforadora" in df.columns:
     df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
-    steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numeric kept).")
+    steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numeric kept as-is).")
 
 # 6) Cross-fill Plan/Real pairs & delete both-empty
 pairs = [
@@ -307,7 +350,7 @@ if removed_total_pairs:
 steps_done.append("• Cross-filled Plan/Real pairs (Este, Norte, Elev, Profundidad).")
 
 # ==========================================================
-# REPORTING
+# REPORTING (no operator preview; concise)
 # ==========================================================
 with st.expander("⚙️ Processing Summary", expanded=False):
     st.markdown("### 🛠️ Transformations Applied")
@@ -316,6 +359,7 @@ with st.expander("⚙️ Processing Summary", expanded=False):
             f"<div style='background:#eef6ff;padding:8px;border-radius:6px;margin-bottom:6px;color:#0b5394;'>{s}</div>",
             unsafe_allow_html=True
         )
+
     st.markdown("### 🗑️ Rows Deleted (by rule)")
     if deletes_log:
         for rule, cnt in deletes_log.items():
@@ -330,13 +374,8 @@ with st.expander("⚙️ Processing Summary", expanded=False):
     else:
         st.markdown("_No deletions performed._")
 
-    st.markdown("### 🆕 Unknown Operators Found")
-    if new_unknown_ops:
-        unk_list = sorted(new_unknown_ops.keys())
-        st.write(pd.DataFrame({"Unknown Operator Name": unk_list}))
-        st.info("Copy these names into your mapping file (with IDs) for future runs.")
-    else:
-        st.success("No unknown operators — all names matched your mapping file.")
+    if new_ops_added_count > 0:
+        st.info(f"🆕 New operators detected and assigned: {new_ops_added_count}. You can download the updated mapping below.")
 
 # ==========================================================
 # RESULT PREVIEW
@@ -363,6 +402,7 @@ else:
     )
     export_df = df[selected_columns] if selected_columns else df
 
+# Cleaned main file exports
 excel_buffer = io.BytesIO()
 export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
 excel_buffer.seek(0)
@@ -388,5 +428,32 @@ with c2:
         use_container_width=True
     )
 
+# Updated operators file — only if new operators were added
+if new_ops_added_count > 0:
+    st.markdown("---")
+    st.subheader("👥 Updated Operators Mapping")
+    # Sort by ID, drop duplicates by normalized name keeping first assignment
+    updated_ops = updated_ops_records.copy()
+    updated_ops = updated_ops.dropna(subset=[name_col, id_col])
+    updated_ops[id_col] = updated_ops[id_col].astype(int)
+
+    # Deduplicate by normalized nospace name to avoid near-duplicate repeats
+    updated_ops["_norm"] = updated_ops[name_col].map(lambda x: nospace(strip_accents_lower_spaces(x)))
+    updated_ops = updated_ops.sort_values([id_col]).drop_duplicates("_norm", keep="first").drop(columns="_norm")
+
+    ops_buf = io.BytesIO()
+    updated_ops.to_excel(ops_buf, index=False, engine="openpyxl")
+    ops_buf.seek(0)
+
+    today_tag = datetime.now().strftime("%d%m%y")
+    st.download_button(
+        "📒 Download Updated Operators File",
+        ops_buf,
+        file_name=f"DGM_Operators_Updated_{today_tag}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi -")
+
