@@ -331,16 +331,17 @@ else:
 excel_buf = io.BytesIO()
 export_df.to_excel(excel_buf, index=False, engine="openpyxl")
 excel_buf.seek(0)
+
 txt_buf = io.StringIO()
-export_df.to_csv(txt_buf, index=False, sep=";")
+export_df.to_csv(txt_buf, index=False, sep="\t")
 
 c1, c2 = st.columns(2)
 with c1:
     st.download_button("📘 Download Excel File", excel_buf, file_name="DGM_Autonomia_Cleaned.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 with c2:
-    st.download_button("📗 Download TXT File", txt_buf.getvalue(),
-                       file_name="DGM_Autonomia_Cleaned.csv", mime="text/txt", use_container_width=True)
+    st.download_button("📄 Download TXT File", txt_buf.getvalue(),
+                       file_name="DGM_Autonomia_Cleaned.txt", mime="text/plain", use_container_width=True)
 
 # ==========================================================
 # UPDATED OPERATORS DOWNLOAD
@@ -368,6 +369,8 @@ if new_ops_added_count > 0:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi -")
+
+
 
 
 
