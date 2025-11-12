@@ -27,8 +27,13 @@ uploaded_file = st.file_uploader("📤 Upload your Excel or CSV file", type=["xl
 
 if uploaded_file is not None:
     file_name = uploaded_file.name.lower()
+    # Robust CSV read (supports ; and ,)
     if file_name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file, sep=";", engine="python")
+        try:
+            df = pd.read_csv(uploaded_file, sep=";", engine="python")
+        except Exception:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, engine="python")
     else:
         df = pd.read_excel(uploaded_file)
 
@@ -36,12 +41,18 @@ if uploaded_file is not None:
     st.dataframe(df.head(10), use_container_width=True)
     st.info(f"📏 Total rows before cleaning: {len(df)}")
 
-    steps_done = []
+    # For reporting
+    delete_counts = {
+        "tiempo_perforacion_empty": 0,
+        "pairs_both_empty": 0,
+    }
+    steps_done = []   # transformations summary (no counts)
+    deletes_log = []  # deletions summary (with counts)
 
     # ==========================================================
     # CLEANING STEPS
     # ==========================================================
-    with st.expander("⚙️ See Processing Steps", expanded=False):
+    with st.expander("⚙️ Processing Summary (what the code did)", expanded=False):
 
         # ---------- Text Normalization ----------
         def normalize_text(s):
@@ -53,11 +64,12 @@ if uploaded_file is not None:
             return s
 
         def _norm_ws(text: str) -> str:
+            """Normalize: lowercase, remove accents, keep letters/spaces, collapse spaces."""
             if pd.isna(text):
                 return ""
             s = str(text).lower().strip()
             s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # remove accents
             s = re.sub(r"[^a-z\s]", " ", s)
             s = re.sub(r"\s+", " ", s).strip()
             return s
@@ -94,6 +106,7 @@ if uploaded_file is not None:
         new_operators = {}
 
         def _best_operator_match(raw_value: str):
+            """Return (code, reason) with dynamic sequential assignment for new operators."""
             if pd.isna(raw_value) or str(raw_value).strip() == "":
                 return 25, "empty→25"
 
@@ -101,10 +114,12 @@ if uploaded_file is not None:
             s_ns = _nospace(s_ws)
             s_tokens = set(s_ws.split())
 
+            # Exact nospace match
             for rec in _ops_index:
                 if s_ns == rec["nospace"]:
                     return rec["code"], "exact-nospace"
 
+            # Token coverage
             best = None
             for rec in _ops_index:
                 req = rec["tokens"]
@@ -120,6 +135,7 @@ if uploaded_file is not None:
             if best and best["score"] >= 0.80:
                 return best["code"], "token-cover"
 
+            # Fuzzy fallback
             best = None
             for rec in _ops_index:
                 sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
@@ -128,6 +144,7 @@ if uploaded_file is not None:
             if best and best["sim"] >= 0.90:
                 return best["code"], f"fuzzy({best['sim']:.2f})"
 
+            # Unknown → create new sequential code
             if not hasattr(_best_operator_match, "next_code"):
                 _best_operator_match.next_code = max(_operator_names.values()) + 1
 
@@ -152,30 +169,32 @@ if uploaded_file is not None:
                 return 2
             return value
 
-        # ---------- Expansion & Nivel ----------
-        def extract_xpansion_nivel(text):
+        # ---------- Expansion & Level from Banco ----------
+        def extract_expansion_level(text):
             if pd.isna(text):
                 return None, None
             text = str(text).upper()
             xp_match = re.search(r"F0*(\d+)", text)
-            xpansion = int(xp_match.group(1)) if xp_match else None
+            expansion = int(xp_match.group(1)) if xp_match else None
             nivel = None
             nv_match = re.search(r"B0*(\d{3,4})", text)
             if nv_match:
                 nivel = int(nv_match.group(1))
             else:
+                # common 4-digit level between separators
                 nv_match = re.search(r"[_\-](2\d{3}|3\d{3}|4\d{3})[_\-]", text)
                 if nv_match:
                     nivel = int(nv_match.group(1))
-            return xpansion, nivel
+            return expansion, nivel
 
         # ---------- Perforadora ----------
         def clean_perforadora(value):
+            """Only map PE_01→1, PE_02→2, PD_02→22, Trepsa→4. Keep numeric values as-is."""
             if pd.isna(value):
                 return value
             val = normalize_text(value)
             if val.isdigit():
-                return int(val)
+                return int(val)  # keep as-is, even 9100 etc.
             if "pe_01" in val or "pe01" in val:
                 return 1
             if "pe_02" in val or "pe02" in val:
@@ -186,82 +205,122 @@ if uploaded_file is not None:
                 return 4
             return value
 
-        # ---------- Pair Cleaning ----------
-        def clean_pair(df, col1, col2):
-            def replace_vals(a, b):
-                try:
-                    a = float(a)
-                except:
-                    a = None
-                try:
-                    b = float(b)
-                except:
-                    b = None
-                if a is None or a <= 0:
+        # ---------- Cross-fill two columns ----------
+        def cross_fill_pair(df_in, col1, col2):
+            """Cross-fill between two numeric columns and drop rows if both empty/<=0."""
+            def fix_values(a, b):
+                a = pd.to_numeric(a, errors="coerce")
+                b = pd.to_numeric(b, errors="coerce")
+                if pd.isna(a) or a <= 0:
                     a = b
-                if b is None or b <= 0:
+                if pd.isna(b) or b <= 0:
                     b = a
                 return a, b
 
-            new1, new2 = zip(*[replace_vals(a, b) for a, b in zip(df[col1], df[col2])])
-            df[col1], df[col2] = new1, new2
-            df = df.dropna(subset=[col1, col2], how="all")
-            return df
+            df_local = df_in.copy()
+            filled = df_local[[col1, col2]].apply(lambda r: fix_values(r[col1], r[col2]), axis=1)
+            df_local[col1], df_local[col2] = zip(*filled)
+
+            before = len(df_local)
+            df_local = df_local.dropna(subset=[col1, col2], how="all")
+            removed = before - len(df_local)
+            return df_local, removed
 
         # ---------- Cleaning Starts ----------
+        # Remove duplicate/numbered duplicate columns and tidy headers
         df = df.loc[:, ~df.columns.duplicated()]
-        df = df.loc[:, ~df.columns.str.contains(r"\.1$|\.2$|\.3$", regex=True)]
+        df = df.loc[:, ~df.columns.str.contains(r"\.\d+$", regex=True)]
+        df.columns = (
+            df.columns.astype(str)
+            .str.replace(r"[\r\n]+", " ", regex=True)
+            .str.replace('"', "", regex=False)
+            .str.strip()
+        )
 
-        # Delete rows with empty "Tiempo Perforación [hrs]"
+        # --- 0) Ensure Tiempo Perforación header is consistent if garbled
+        # Fix common corrupted header variants (e.g., "Tiempo PerforaciÃ³n [hrs]")
+        for col in df.columns:
+            if "tiempo" in col.lower() and "perfor" in col.lower():
+                df.rename(columns={col: "Tiempo Perforación [hrs]"}, inplace=True)
+                break
+
+        # --- 1) Delete rows with empty "Tiempo Perforación [hrs]"
         if "Tiempo Perforación [hrs]" in df.columns:
             before = len(df)
             df = df.dropna(subset=["Tiempo Perforación [hrs]"])
-            after = len(df)
-            steps_done.append(f"✅ Removed {before - after} rows with empty 'Tiempo Perforación [hrs]'.")
+            removed = before - len(df)
+            delete_counts["tiempo_perforacion_empty"] += removed
+            steps_done.append("• Deleted rows with empty 'Tiempo Perforación [hrs]'.")
+        else:
+            steps_done.append("• Column 'Tiempo Perforación [hrs]' not found (no deletion applied).")
 
-        # Turno conversion
+        # --- 2) Turno conversion
         if "Turno" in df.columns:
             df["Turno"] = df["Turno"].apply(convert_turno)
-            steps_done.append("✅ Turno values converted (Día→1, Noche→2).")
+            steps_done.append("• Converted Turno values (Día→1, Noche→2).")
 
-        # Operador mapping
+        # --- 3) Operador mapping (with dynamic new codes)
         if "Operador" in df.columns:
             df["Operador"] = df["Operador"].apply(convert_operador)
-            steps_done.append("✅ Operador names mapped and new ones assigned sequentially.")
+            steps_done.append("• Mapped Operador names (added new operators sequentially if needed).")
+            # Show newly added operators if any
+            if new_operators:
+                st.markdown("<b>🆕 New Operators Added:</b>", unsafe_allow_html=True)
+                for name, code in new_operators.items():
+                    st.markdown(f"- {name} → <span style='color:green;'>Code {code}</span>", unsafe_allow_html=True)
 
-        # Banco → Expansion + Nivel
+        # --- 4) Banco → Expansion + Nivel (insert right after Banco)
         if "Banco" in df.columns:
-            xpansions, nivels = zip(*df["Banco"].apply(extract_xpansion_nivel))
+            expansions, nivels = zip(*df["Banco"].apply(extract_expansion_level))
             insert_idx = df.columns.get_loc("Banco") + 1
-            df.insert(insert_idx, "Xpansion", xpansions)
+            df.insert(insert_idx, "Expansion", expansions)
             df.insert(insert_idx + 1, "Nivel", nivels)
-            steps_done.append("✅ Extracted Xpansion and Nivel columns from Banco.")
+            steps_done.append("• Extracted Expansion and Nivel from Banco (added next to Banco).")
 
-        # Perforadora cleaning
+        # --- 5) Perforadora mapping (keep numerics as-is)
         if "Perforadora" in df.columns:
             df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
-            steps_done.append("✅ Cleaned Perforadora: PE_01→1, PE_02→2, PD_02→22, Trepsa→4.")
+            steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numeric kept).")
 
-        # Pair columns
+        # --- 6) Cross-fill Plan/Real pairs and delete rows if both empty
         pairs = [
             ("Este Plan", "Este Real"),
             ("Norte Plan", "Norte Real"),
             ("Elev Plan", "Elev Real"),
             ("Profundidad Objetivo", "Profundidad Real"),
         ]
-        count_pairs = 0
+        total_removed_pairs = 0
         for col1, col2 in pairs:
             if col1 in df.columns and col2 in df.columns:
-                df = clean_pair(df, col1, col2)
-                count_pairs += 1
-        steps_done.append(f"✅ Cross-filled {count_pairs} Plan/Real column pairs.")
+                df, removed = cross_fill_pair(df, col1, col2)
+                total_removed_pairs += removed
+        delete_counts["pairs_both_empty"] += total_removed_pairs
+        steps_done.append("• Cross-filled Plan/Real pairs (Este, Norte, Elev, Profundidad).")
 
+        # --- Print transformations summary
+        st.markdown("### 🛠️ Transformations Applied")
         for step in steps_done:
             st.markdown(
-                f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
+                f"<div style='background:#eef6ff;padding:8px;border-radius:6px;margin-bottom:6px;color:#0b5394;'>{step}</div>",
                 unsafe_allow_html=True
             )
+
+        # --- Print deletions summary
+        st.markdown("### 🗑️ Rows Deleted (by rule)")
+        st.markdown(
+            f"<div style='background:#fdeaea;padding:8px;border-radius:6px;margin-bottom:6px;color:#a61b1b;'>"
+            f"• Empty 'Tiempo Perforación [hrs]': <b>{delete_counts['tiempo_perforacion_empty']}</b><br>"
+            f"• Both values empty in Plan/Real pairs (after cross-fill): <b>{delete_counts['pairs_both_empty']}</b>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        total_deleted = sum(delete_counts.values())
+        st.markdown(
+            f"<div style='background:#f0fff0;padding:10px;border-radius:8px;margin-top:6px;color:#0b6b3a;'>"
+            f"<b>Total deleted rows: {total_deleted}</b>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
     # ==========================================================
     # AFTER CLEANING — RESULTS
@@ -282,7 +341,7 @@ if uploaded_file is not None:
         export_df = df
     else:
         selected_columns = st.multiselect(
-            "Select columns (drag to reorder):",
+            "Select columns (click in the order you want):",
             options=list(df.columns),
             default=list(df.columns)
         )
@@ -318,8 +377,5 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
-
-
 
 
