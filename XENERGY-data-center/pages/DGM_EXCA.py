@@ -7,7 +7,7 @@ import io
 # ======================================================
 st.markdown(
     "<h2 style='text-align:center;'>DGM — Excavator Performance Processor</h2>"
-    "<p style='text-align:center;color:gray;'>Extracts daily rendimiento per excavator and structures data by day, month, and year.</p>"
+    "<p style='text-align:center;color:gray;'>Processes excavator rendimiento data and converts it to daily structured format.</p>"
     "<hr>",
     unsafe_allow_html=True,
 )
@@ -85,7 +85,7 @@ df["Month"] = fechas.dt.month
 df["Year"] = fechas.dt.year
 steps.append("✅ Split FECHA into Day / Month / Year")
 
-# 2️⃣ Extract rendimiento values and rename
+# 2️⃣ Extract rendimiento values, rename, and divide by 1000
 clean_cols = {}
 for c in rend_cols:
     new_name = c.replace("RENDIMIENTO", "").strip()
@@ -94,7 +94,13 @@ for c in rend_cols:
     clean_cols[c] = new_name
 
 result = df[["Day", "Month", "Year"] + rend_cols].rename(columns=clean_cols)
-steps.append("✅ Extracted rendimiento columns and renamed them to clean excavator references")
+
+# Divide rendimiento values by 1000 (rounded to 4 decimals)
+for col in clean_cols.values():
+    result[col] = pd.to_numeric(result[col], errors="coerce") / 1000
+    result[col] = result[col].round(4)
+
+steps.append("✅ Extracted rendimiento columns, renamed them, and divided values by 1000")
 
 # ======================================================
 # DISPLAY RESULTS
