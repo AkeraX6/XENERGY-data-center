@@ -28,7 +28,7 @@ uploaded_file = st.file_uploader("📤 Upload your Excel or CSV file", type=["xl
 if uploaded_file is not None:
     file_name = uploaded_file.name.lower()
     if file_name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file, sep=";", engine="python")
     else:
         df = pd.read_excel(uploaded_file)
 
@@ -53,12 +53,11 @@ if uploaded_file is not None:
             return s
 
         def _norm_ws(text: str) -> str:
-            """Normalize: lowercase, remove accents, keep letters/spaces, collapse spaces."""
             if pd.isna(text):
                 return ""
             s = str(text).lower().strip()
             s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # remove accents
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
             s = re.sub(r"[^a-z\s]", " ", s)
             s = re.sub(r"\s+", " ", s).strip()
             return s
@@ -94,9 +93,7 @@ if uploaded_file is not None:
 
         new_operators = {}
 
-        # ---------- Operator Matching ----------
         def _best_operator_match(raw_value: str):
-            """Return (code, reason) with dynamic sequential assignment for new operators."""
             if pd.isna(raw_value) or str(raw_value).strip() == "":
                 return 25, "empty→25"
 
@@ -104,12 +101,10 @@ if uploaded_file is not None:
             s_ns = _nospace(s_ws)
             s_tokens = set(s_ws.split())
 
-            # 1️⃣ Exact nospace match (accent-insensitive)
             for rec in _ops_index:
                 if s_ns == rec["nospace"]:
                     return rec["code"], "exact-nospace"
 
-            # 2️⃣ Token coverage
             best = None
             for rec in _ops_index:
                 req = rec["tokens"]
@@ -125,7 +120,6 @@ if uploaded_file is not None:
             if best and best["score"] >= 0.80:
                 return best["code"], "token-cover"
 
-            # 3️⃣ Fuzzy fallback (small typos)
             best = None
             for rec in _ops_index:
                 sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
@@ -134,21 +128,11 @@ if uploaded_file is not None:
             if best and best["sim"] >= 0.90:
                 return best["code"], f"fuzzy({best['sim']:.2f})"
 
-            # 4️⃣ Unknown → create new sequential code
-            norm_name = _nospace(s_ws)
-
-            # Prevent duplicates (Raul ≈ Raúl)
-            for known in new_operators.keys():
-                if SequenceMatcher(None, norm_name, _nospace(_norm_ws(known))).ratio() >= 0.95:
-                    return new_operators[known], "duplicate-new"
-
-            # Persistent counter for sequential numbering
             if not hasattr(_best_operator_match, "next_code"):
                 _best_operator_match.next_code = max(_operator_names.values()) + 1
 
             new_code = _best_operator_match.next_code
             _best_operator_match.next_code += 1
-
             new_operators[raw_value] = new_code
             _operator_names[raw_value] = new_code
             return new_code, "new-operator"
@@ -191,10 +175,7 @@ if uploaded_file is not None:
                 return value
             val = normalize_text(value)
             if val.isdigit():
-                num = int(val)
-                if 9000 <= num <= 9300:
-                    return 9273
-                return num
+                return int(val)
             if "pe_01" in val or "pe01" in val:
                 return 1
             if "pe_02" in val or "pe02" in val:
@@ -231,29 +212,24 @@ if uploaded_file is not None:
         df = df.loc[:, ~df.columns.duplicated()]
         df = df.loc[:, ~df.columns.str.contains(r"\.1$|\.2$|\.3$", regex=True)]
 
-        df.columns = (
-            df.columns.astype(str)
-            .str.replace(r"[\r\n]+", " ", regex=True)
-            .str.replace('"', "", regex=False)
-            .str.strip()
-        )
+        # Delete rows with empty "Tiempo Perforación [hrs]"
+        if "Tiempo Perforación [hrs]" in df.columns:
+            before = len(df)
+            df = df.dropna(subset=["Tiempo Perforación [hrs]"])
+            after = len(df)
+            steps_done.append(f"✅ Removed {before - after} rows with empty 'Tiempo Perforación [hrs]'.")
 
+        # Turno conversion
         if "Turno" in df.columns:
             df["Turno"] = df["Turno"].apply(convert_turno)
             steps_done.append("✅ Turno values converted (Día→1, Noche→2).")
 
+        # Operador mapping
         if "Operador" in df.columns:
             df["Operador"] = df["Operador"].apply(convert_operador)
             steps_done.append("✅ Operador names mapped and new ones assigned sequentially.")
 
-            # --- Display newly found operators
-            if new_operators:
-                st.markdown("<h4 style='color:#d97706;'>🆕 New Operators Added During Processing</h4>", unsafe_allow_html=True)
-                for name, code in new_operators.items():
-                    st.markdown(f"<b>{name}</b> → <span style='color:green;'>Code {code}</span>", unsafe_allow_html=True)
-            else:
-                st.info("✅ No new operators found — all matched existing records.")
-
+        # Banco → Expansion + Nivel
         if "Banco" in df.columns:
             xpansions, nivels = zip(*df["Banco"].apply(extract_xpansion_nivel))
             insert_idx = df.columns.get_loc("Banco") + 1
@@ -261,10 +237,12 @@ if uploaded_file is not None:
             df.insert(insert_idx + 1, "Nivel", nivels)
             steps_done.append("✅ Extracted Xpansion and Nivel columns from Banco.")
 
+        # Perforadora cleaning
         if "Perforadora" in df.columns:
             df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
-            steps_done.append("✅ Standardized Perforadora names and numeric codes.")
+            steps_done.append("✅ Cleaned Perforadora: PE_01→1, PE_02→2, PD_02→22, Trepsa→4.")
 
+        # Pair columns
         pairs = [
             ("Este Plan", "Este Real"),
             ("Norte Plan", "Norte Real"),
@@ -340,6 +318,8 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload a file to begin.")
+
+
 
 
 
