@@ -52,7 +52,7 @@ if uploaded_file is not None:
     # ==========================================================
     # CLEANING STEPS
     # ==========================================================
-    with st.expander("⚙️ Processing Summary (what the code did)", expanded=False):
+    with st.expander("⚙️ Processing Summary", expanded=False):
 
         # ---------- Text Normalization ----------
         def normalize_text(s):
@@ -377,5 +377,6 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload a file to begin.")
+
 
 
