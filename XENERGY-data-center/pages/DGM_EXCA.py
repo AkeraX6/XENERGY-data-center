@@ -85,7 +85,7 @@ df["Month"] = fechas.dt.month
 df["Year"] = fechas.dt.year
 steps.append("✅ Split FECHA into Day / Month / Year")
 
-# 2️⃣ Extract rendimiento values, rename, and divide by 1000
+# 2️⃣ Extract rendimiento values, rename, divide by 1000, and fill NaN with 0
 clean_cols = {}
 for c in rend_cols:
     new_name = c.replace("RENDIMIENTO", "").strip()
@@ -95,12 +95,12 @@ for c in rend_cols:
 
 result = df[["Day", "Month", "Year"] + rend_cols].rename(columns=clean_cols)
 
-# Divide rendimiento values by 1000 (rounded to 4 decimals)
+# Divide rendimiento values by 1000 and fill NaN with 0
 for col in clean_cols.values():
-    result[col] = pd.to_numeric(result[col], errors="coerce") / 1000
-    result[col] = result[col].round(4)
+    result[col] = pd.to_numeric(result[col], errors="coerce").fillna(0)  # fill empty cells with 0
+    result[col] = (result[col] / 1000).round(4)
 
-steps.append("✅ Extracted rendimiento columns, renamed them, and divided values by 1000")
+steps.append("✅ Extracted rendimiento columns, renamed them, filled empty values with 0, and divided by 1000")
 
 # ======================================================
 # DISPLAY RESULTS
@@ -143,3 +143,4 @@ with col2:
         mime="text/csv",
         use_container_width=True,
     )
+
