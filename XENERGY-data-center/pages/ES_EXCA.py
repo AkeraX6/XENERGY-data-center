@@ -65,6 +65,25 @@ if uploaded_file is not None:
     steps_done = []
 
     # ==========================================================
+    # NORMALIZE KEY COLUMN NAMES (HORA variants, CUADRILLA)
+    # ==========================================================
+
+    # --- Find HORA column (HORA, Hora, HORA 1, HORA1, etc.) ---
+    hora_col = None
+    for c in df.columns:
+        cname = re.sub(r"\s+", "", str(c)).upper()   # remove spaces, uppercase
+        if cname.startswith("HORA"):                 # HORA, HORA1, HORA_1, etc.
+            hora_col = c
+            break
+    if hora_col and hora_col != "HORA":
+        df.rename(columns={hora_col: "HORA"}, inplace=True)
+        steps_done.append(f"ℹ️ Detected hour column '{hora_col}' and normalized name to 'HORA'.")
+    elif hora_col == "HORA":
+        steps_done.append("ℹ️ Using existing 'HORA' column as hour field.")
+    else:
+        steps_done.append("⚠️ No column matching HORA / HORA1 / HORA 1 found.")
+
+    # ==========================================================
     # CLEANING STEPS
     # ==========================================================
     with st.expander("⚙️ Processing Steps (Click to Expand)", expanded=False):
@@ -93,7 +112,7 @@ if uploaded_file is not None:
         # STEP 2 – Map CUADRILLA (A–D → 1–4)
         cuadrilla_col = None
         for c in df.columns:
-            if c.upper().startswith("CUADRILL"):
+            if str(c).upper().startswith("CUADRILL"):
                 cuadrilla_col = c
                 break
 
@@ -134,7 +153,7 @@ if uploaded_file is not None:
                 f"✅ HORA / HoraReal: removed {deleted} rows with empty/invalid HORA and computed HoraReal using TURNO."
             )
         else:
-            steps_done.append("⚠️ Column 'HORA' not found — HoraReal not created.")
+            steps_done.append("⚠️ No usable HORA column found — HoraReal not created.")
 
         # STEP 4 – Clean PALA (keep numeric suffix only)
         if "PALA" in df.columns:
@@ -262,3 +281,4 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
