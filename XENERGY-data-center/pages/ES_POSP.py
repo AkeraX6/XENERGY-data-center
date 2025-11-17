@@ -1,175 +1,228 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import io
 import re
-import unicodedata
+import io
 
 # ==========================================================
-# NORMALIZATION HELPERS
+# SMALL HELPERS
 # ==========================================================
-def norm(s: str):
-    if s is None:
-        return ""
-    s = str(s).lower()
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    return s.replace(" ", "").replace("_", "")
+def normalize_name(name: str) -> str:
+    """Uppercase, remove spaces and underscores to compare column names."""
+    return re.sub(r"[\s_]+", "", str(name)).upper()
 
-def find_col(df, candidates):
-    m = {norm(c): c for c in df.columns}
-    for c in candidates:
-        if c in m:
-            return m[c]
+def find_column(df, candidates):
+    """Find a column in df whose normalized name matches any of candidates."""
+    norm_candidates = {normalize_name(c) for c in candidates}
+    for col in df.columns:
+        if normalize_name(col) in norm_candidates:
+            return col
     return None
-
 
 # ==========================================================
 # PAGE HEADER
 # ==========================================================
 st.markdown(
     "<h2 style='text-align:center;'>Escondida — Posición de Palas (ES_POSP)</h2>",
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
-st.markdown("<p style='text-align:center;color:gray;'>Procesamiento automático de datos de ubicación de palas.</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center; color:gray;'>Limpieza y transformación de datos de posición de palas.</p>",
+    unsafe_allow_html=True,
+)
 st.markdown("---")
 
-# BACK BUTTON
+# 🔙 Back to Menu
 if st.button("⬅️ Back to Menu", key="back_esposp"):
     st.session_state.page = "dashboard"
     st.rerun()
 
-
 # ==========================================================
 # FILE UPLOAD
 # ==========================================================
-uploaded_file = st.file_uploader("📤 Upload your Excel file", type=["xlsx","xls","csv"])
+uploaded_file = st.file_uploader("📤 Upload your Excel/CSV file", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
 
-    # LOAD FILE
-    try:
-        if uploaded_file.name.lower().endswith(".csv"):
-            df = pd.read_csv(uploaded_file, engine="python")
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Error loading file: {e}")
-        st.stop()
+    # ---------- Read file (Excel or CSV) ----------
+    file_name = uploaded_file.name.lower()
+
+    def read_csv_smart(file_obj):
+        sample = file_obj.read(8192).decode(errors="replace")
+        file_obj.seek(0)
+        try:
+            return pd.read_csv(file_obj, sep=None, engine="python")
+        except Exception:
+            if sample.count(";") > sample.count(","):
+                file_obj.seek(0)
+                return pd.read_csv(file_obj, sep=";")
+            elif sample.count("\t") > 0:
+                file_obj.seek(0)
+                return pd.read_csv(file_obj, sep="\t")
+            elif sample.count("|") > 0:
+                file_obj.seek(0)
+                return pd.read_csv(file_obj, sep="|")
+            else:
+                file_obj.seek(0)
+                return pd.read_csv(file_obj)
+
+    if file_name.endswith(".csv"):
+        df = read_csv_smart(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
     st.subheader("📄 Original Data (Before Cleaning)")
     st.dataframe(df.head(10), use_container_width=True)
     st.info(f"📏 Total rows before cleaning: {len(df)}")
 
+    original_rows = len(df)
     steps = []
-    deleted_total = 0
 
     # ==========================================================
-    # PROCESSING STEPS (COLLAPSED LIKE OTHER CODES)
+    # PROCESSING STEPS
     # ==========================================================
     with st.expander("⚙️ Processing Steps (Click to Expand)", expanded=False):
 
-        # =========== COLUMN DETECTION ===========
-        col_fecha     = find_col(df, ["fecha"])
-        col_turno     = find_col(df, ["turno"])
-        col_cuadrilla = find_col(df, ["cuadrilla"])
-        col_pala      = find_col(df, ["pala"])
-        col_hcarga    = find_col(df, ["hcarga","h_carga","horacarga"])
-        col_dumpx     = find_col(df, ["dumpx"])
-        col_dumpy     = find_col(df, ["dumpy"])
-        col_dumpz     = find_col(df, ["dumpz","cenz"])
+        # ---------- Detect columns (case/space-insensitive) ----------
+        col_fecha = find_column(df, ["FECHA"])
+        col_turno = find_column(df, ["TURNO"])
+        col_cuadrilla = find_column(df, ["CUADRILLA"])
+        col_pala = find_column(df, ["PALA"])
+        col_hcarga = find_column(df, ["H_CARGA", "HCARGA", "H CARGA"])
+        col_dumpx = find_column(df, ["DUMPX"])
+        col_dumpy = find_column(df, ["DUMPY"])
+        col_dumpz = find_column(df, ["DUMPZ", "CENZ"])
 
-        required = [col_fecha,col_turno,col_cuadrilla,col_pala,col_hcarga,col_dumpx,col_dumpy,col_dumpz]
-        if any(c is None for c in required):
-            st.error("❌ Some required columns were not found.")
-            st.stop()
+        missing_cols = []
+        for name, col in [
+            ("FECHA", col_fecha),
+            ("TURNO", col_turno),
+            ("CUADRILLA", col_cuadrilla),
+            ("PALA", col_pala),
+            ("H_CARGA", col_hcarga),
+            ("DUMPX", col_dumpx),
+            ("DUMPY", col_dumpy),
+            ("DUMPZ/CENZ", col_dumpz),
+        ]:
+            if col is None:
+                missing_cols.append(name)
 
-        # ========= FECHA SPLIT =========
-        df[col_fecha] = pd.to_datetime(df[col_fecha], errors="coerce")
-        df["Dia"] = df[col_fecha].dt.day
-        df["Mes"] = df[col_fecha].dt.month
-        df["Año"] = df[col_fecha].dt.year
-        steps.append("✔️ FECHA column split into Día, Mes, Año.")
+        if missing_cols:
+            st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+        else:
+            # ---------- 1) Split FECHA into Dia / Mes / Año ----------
+            # Assumes FECHA is a valid date or string convertible to date
+            df[col_fecha] = pd.to_datetime(df[col_fecha], errors="coerce")
+            before = len(df)
+            df = df[df[col_fecha].notna()]
+            deleted = before - len(df)
+            if deleted > 0:
+                steps.append(f"🗑️ FECHA invalid/empty rows removed: {deleted}")
 
-        # ========= TURN0 =========
-        df[col_turno] = df[col_turno].astype(str).str.upper().str.strip()
-        df["Turno"] = df[col_turno].replace({"D":1,"N":2}).fillna(1)
-        steps.append("✔️ Turno converted (D=1, N=2).")
+            df["Dia"] = df[col_fecha].dt.day.astype(int)
+            df["Mes"] = df[col_fecha].dt.month.astype(int)
+            df["Año"] = df[col_fecha].dt.year.astype(int)
+            steps.append("✔️ FECHA split into Dia / Mes / Año.")
 
-        # ========= CUADRILLA =========
-        df[col_cuadrilla] = df[col_cuadrilla].astype(str).str.upper().str.strip()
-        df["Cuadrilla"] = df[col_cuadrilla].replace({"A":1,"B":2,"C":3,"D":4})
-        steps.append("✔️ Cuadrilla converted (A=1, B=2, C=3, D=4).")
+            # ---------- 2) Turno: D→1, N→2, default 1 ----------
+            before = len(df)
+            turno_str = df[col_turno].astype(str).str.strip().str.upper()
+            df["Turno"] = turno_str.map({"D": 1, "N": 2}).fillna(1).astype(int)
+            steps.append("✔️ Turno normalized (D→1, N→2, empty→1). (No rows deleted here)")
 
-        # ========= PALA FILTER =========
-        before = len(df)
-        df = df[df[col_pala].astype(str).str.contains("SHE00", case=False, na=False)]
-        deleted = before - len(df)
-        deleted_total += deleted
-        steps.append(f"✔️ Pala filtered (SHE00XX only). Deleted: {deleted}")
+            # ---------- 3) Cuadrilla: A→1, B→2, C→3, D→4 ----------
+            cuadrilla_str = df[col_cuadrilla].astype(str).str.strip().str.upper()
+            df["Cuadrilla"] = cuadrilla_str.map({"A": 1, "B": 2, "C": 3, "D": 4})
+            # If something is not A–D, mark as NaN and drop those rows
+            before = len(df)
+            df = df[df["Cuadrilla"].notna()]
+            df["Cuadrilla"] = df["Cuadrilla"].astype(int)
+            deleted = before - len(df)
+            steps.append(f"✔️ Cuadrilla mapped (A=1..D=4). Rows with invalid cuadrilla removed: {deleted}")
 
-        # Extract trailing digits → convert to integer → remove leading zeros
-        df["Pala"] = (
-            df[col_pala]
-            .astype(str)
-            .str.extract(r"(\d+)$")[0]        # extract numbers
-            .astype(float)                    # convert to numeric
-            .fillna(0)
-            .astype(int)                      # final clean integer
-)
-        steps.append("✔️ Pala transformed (SHE0067 → 67).")
+            # ---------- 4) PALA: keep only SHE00XX and transform to numeric (e.g., SHE0068→68) ----------
+            before = len(df)
+            mask_she = df[col_pala].astype(str).str.contains(r"SHE00", case=False, na=False)
+            df = df[mask_she]
+            deleted = before - len(df)
+            steps.append(f"✔️ Pala filtered for SHE00XX pattern. Rows removed: {deleted}")
 
-        # ========= H_CARGA SPLIT =========
-        def split_hm(val):
-            if pd.isna(val):
-                return (None,None)
-            m = re.match(r"(\d+):(\d+)", str(val))
-            return (int(m.group(1)), int(m.group(2))) if m else (None,None)
+            # Extract numeric suffix
+            df["Pala"] = (
+                df[col_pala]
+                .astype(str)
+                .str.extract(r"(\d+)$")[0]
+                .astype(float)
+                .fillna(0)
+                .astype(int)
+            )
+            steps.append("✔️ Pala transformed to numeric (SHE0067 → 67).")
 
-        df["Hora"], df["Minuto"] = zip(*df[col_hcarga].apply(split_hm))
-        steps.append("✔️ H_CARGA split into Hora and Minuto.")
+            # ---------- 5) H_CARGA → Hora / Minuto ----------
+            # Expect format like '02:31:41.0000000'
+            before = len(df)
+            hc = df[col_hcarga].astype(str)
 
-        # ========= DUMPX FILTER =========
-        before = len(df)
-        df = df[(df[col_dumpx] >= 16000) & (df[col_dumpx] <= 40000)]
-        deleted = before - len(df)
-        deleted_total += deleted
-        steps.append(f"✔️ DumpX filtered (16000–40000). Deleted: {deleted}")
+            # Parse hours/minutes with regex
+            match = hc.str.extract(r"(?P<hora>\d{1,2}):(?P<min>\d{1,2})")
+            df["Hora"] = pd.to_numeric(match["hora"], errors="coerce")
+            df["Minuto"] = pd.to_numeric(match["min"], errors="coerce")
 
-        # ========= DUMPY FILTER =========
-        before = len(df)
-        df = df[df[col_dumpy] >= 110000]
-        deleted = before - len(df)
-        deleted_total += deleted
-        steps.append(f"✔️ DumpY filtered (>110000). Deleted: {deleted}")
+            # Drop rows where we could not parse
+            df = df[df["Hora"].notna() & df["Minuto"].notna()]
+            df["Hora"] = df["Hora"].astype(int)
+            df["Minuto"] = df["Minuto"].astype(int)
+            deleted = before - len(df)
+            steps.append(f"✔️ H_CARGA parsed into Hora / Minuto. Rows with invalid time removed: {deleted}")
 
-        # ========= DUMPZ FILTER =========
-        before = len(df)
-        df = df[(df[col_dumpz] >= 2000) & (df[col_dumpz] <= 5000)]
-        deleted = before - len(df)
-        deleted_total += deleted
-        steps.append(f"✔️ DumpZ/CENZ filtered (2000–5000). Deleted: {deleted}")
+            # ---------- 6) DUMPX filter: keep 10,000 < X < 40,000 ----------
+            before = len(df)
+            df["X"] = pd.to_numeric(df[col_dumpx], errors="coerce")
+            df = df[df["X"].notna()]
+            df = df[(df["X"] > 10000) & (df["X"] < 40000)]
+            deleted = before - len(df)
+            steps.append(f"✔️ DUMPX filtered (10,000 < X < 40,000). Rows removed: {deleted}")
 
-        # Show steps in green cards (same style as other tools)
+            # ---------- 7) DUMPY filter: keep 80,000 < Y < 400,000 ----------
+            before = len(df)
+            df["Y"] = pd.to_numeric(df[col_dumpy], errors="coerce")
+            df = df[df["Y"].notna()]
+            df = df[(df["Y"] > 80000) & (df["Y"] < 400000)]
+            deleted = before - len(df)
+            steps.append(f"✔️ DUMPY filtered (80,000 < Y < 400,000). Rows removed: {deleted}")
+
+            # ---------- 8) DUMPZ / CENZ filter: keep 2,000 < Z < 4,000 ----------
+            before = len(df)
+            df["Z"] = pd.to_numeric(df[col_dumpz], errors="coerce")
+            df = df[df["Z"].notna()]
+            df = df[(df["Z"] > 2000) & (df["Z"] < 4000)]
+            deleted = before - len(df)
+            steps.append(f"✔️ Z (DUMPZ/CENZ) filtered (2,000 < Z < 4,000). Rows removed: {deleted}")
+
+            # ---------- Summary deleted ----------
+            total_deleted = original_rows - len(df)
+            steps.append(f"📉 Total rows deleted after all filters: {total_deleted}")
+
+        # Show steps in green cards
         for step in steps:
             st.markdown(
-                f"<div style='background:#e8f8f0;padding:8px;border-radius:6px;margin-bottom:6px;'><span style='color:#137333'>{step}</span></div>",
-                unsafe_allow_html=True
+                f"<div style='background-color:#e8f8f0;padding:8px;border-radius:6px;margin-bottom:6px;'>"
+                f"<span style='color:#137333;font-weight:500;font-size:13px;'>{step}</span></div>",
+                unsafe_allow_html=True,
             )
 
-
     # ==========================================================
-    # CLEANED DATA PREVIEW
+    # AFTER CLEANING — RESULTS
     # ==========================================================
     st.markdown("---")
-    st.subheader("📌 Cleaned Data Preview")
+    st.subheader("✅ Cleaned Data Preview")
 
-    df_out = df[["Dia","Mes","Año","Turno","Cuadrilla","Pala","Hora","Minuto",
-                 col_dumpx,col_dumpy,col_dumpz]]
-    df_out = df_out.rename(columns={col_dumpx:"X", col_dumpy:"Y", col_dumpz:"Z"})
+    # Final output in required order
+    output_cols = ["Dia", "Mes", "Año", "Turno", "Cuadrilla", "Pala", "Hora", "Minuto", "X", "Y", "Z"]
+    existing_output_cols = [c for c in output_cols if c in df.columns]
+    export_df = df[existing_output_cols].copy()
 
-    st.dataframe(df_out.head(20), use_container_width=True)
-    st.success(f"✅ Final dataset: {len(df_out)} rows. Total deleted: {deleted_total}")
+    st.dataframe(export_df.head(20), use_container_width=True)
+    st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns.")
 
     # ==========================================================
     # DOWNLOAD SECTION
@@ -177,21 +230,47 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("💾 Export Cleaned File")
 
+    option = st.radio("Choose download option:", ["⬇️ Download All Output Columns", "🧩 Download Custom Columns"])
+
+    if option == "⬇️ Download All Output Columns":
+        final_df = export_df
+    else:
+        selected_columns = st.multiselect(
+            "Select columns (drag to reorder):",
+            options=list(export_df.columns),
+            default=list(export_df.columns),
+        )
+        final_df = export_df[selected_columns] if selected_columns else export_df
+
+    # Excel
     excel_buffer = io.BytesIO()
-    df_out.to_excel(excel_buffer, index=False, engine="openpyxl")
+    final_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
+    # TXT (semicolon-separated)
     txt_buffer = io.StringIO()
-    df_out.to_csv(txt_buffer, sep="\t", index=False)
+    final_df.to_csv(txt_buffer, index=False, sep=";")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.download_button("📘 Download Excel", excel_buffer, "ES_POSP_Cleaned.xlsx")
+        st.download_button(
+            "📘 Download Excel",
+            excel_buffer,
+            file_name="Escondida_POSP_Cleaned.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
     with col2:
-        st.download_button("📄 Download TXT", txt_buffer.getvalue(), "ES_POSP_Cleaned.txt")
+        st.download_button(
+            "📄 Download TXT (; separated)",
+            txt_buffer.getvalue(),
+            file_name="Escondida_POSP_Cleaned.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.caption("Built by Maxam - Omar El Kendi -")
 
 else:
-    st.info("📂 Please upload a file to begin.")
+    st.info("📂 Please upload an Excel or CSV file to begin.")
