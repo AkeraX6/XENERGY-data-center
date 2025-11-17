@@ -108,7 +108,15 @@ if uploaded_file is not None:
         deleted_total += deleted
         steps.append(f"✔️ Pala filtered (SHE00XX only). Deleted: {deleted}")
 
-        df["Pala"] = df[col_pala].astype(str).str.extract(r"(\d+)$")
+        # Extract trailing digits → convert to integer → remove leading zeros
+        df["Pala"] = (
+            df[col_pala]
+            .astype(str)
+            .str.extract(r"(\d+)$")[0]        # extract numbers
+            .astype(float)                    # convert to numeric
+            .fillna(0)
+            .astype(int)                      # final clean integer
+)
         steps.append("✔️ Pala transformed (SHE0067 → 67).")
 
         # ========= H_CARGA SPLIT =========
