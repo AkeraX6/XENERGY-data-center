@@ -153,7 +153,7 @@ st.markdown("<h2 style='text-align:center;'>Escondida — Autonomía Data Cleane
 st.markdown("<p style='text-align:center;color:gray;'>Automatic transformation and validation of drilling autonomy data.</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-if st.button("⬅️ Back to Menu"):
+if st.button("⬅️ Back to Menu", key="back_esauto"):
     st.session_state.page = "dashboard"
     st.rerun()
 
@@ -346,3 +346,4 @@ try:
 
 except Exception as e:
     st.error(f"⚠️ Error: {e}")
+
