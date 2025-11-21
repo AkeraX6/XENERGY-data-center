@@ -46,6 +46,43 @@ EXPECTED_COLUMNS = [
 
 expected_norm_map = {normalize_header(c): c for c in EXPECTED_COLUMNS}
 
+# -------- Pozo transformation helper (case + spaces robust) ----------
+def transform_pozo_value(val):
+    """Apply B/C/D logic, remove Aux & invalids, return int or None."""
+    if pd.isna(val):
+        return None
+    s = str(val).strip().lower()
+    s = s.replace(" ", "")  # "b 125" -> "b125"
+
+    # Remove Aux or similar
+    if s.startswith("aux"):
+        return None
+
+    # Only letters → invalid
+    if re.fullmatch(r"[a-z]+", s):
+        return None
+
+    # Pattern letter + digits (b002, c120, d15...)
+    m = re.match(r"([a-z])(\d+)", s)
+    if m:
+        letter = m.group(1)
+        num = m.group(2)
+        if letter == "b":
+            return int("100000" + num)
+        elif letter == "c":
+            return int("200000" + num)
+        elif letter == "d":
+            return int(num)
+        else:
+            return int(num)
+
+    # Only digits
+    if s.isdigit():
+        return int(s)
+
+    # Mixed weird stuff → discard
+    return None
+
 # ==========================================================
 # PAGE HEADER
 # ==========================================================
@@ -122,7 +159,7 @@ if uploaded_file is not None:
         with st.expander("⚙️ See Processing Steps", expanded=False):
 
             # ------------------------------------------------------
-            # STEP 1 – Perforadora: keep only numeric value (in-place)
+            # STEP 1 – Perforadora: keep only numeric value
             # ------------------------------------------------------
             if "Perforadora" in df.columns:
                 def parse_perforadora(val):
@@ -138,7 +175,7 @@ if uploaded_file is not None:
                 steps_done.append("⚠️ Column 'Perforadora' not found.")
 
             # ------------------------------------------------------
-            # STEP 2 – Turno (dia o noche): create Turno_num (1/2)
+            # STEP 2 – Turno (dia o noche): Dia → 1, Noche → 2 (TurnoNew)
             # ------------------------------------------------------
             if "turno (dia o noche)" in df.columns:
                 def map_turno(val):
@@ -150,13 +187,13 @@ if uploaded_file is not None:
                     return pd.NA
 
                 idx = df.columns.get_loc("turno (dia o noche)")
-                df.insert(idx + 1, "Turno_num", df["turno (dia o noche)"].apply(map_turno))
-                steps_done.append("✅ Created 'Turno_num': Día/D→1, Noche/N→2 (original 'turno (dia o noche)' preserved).")
+                df.insert(idx + 1, "TurnoNew", df["turno (dia o noche)"].apply(map_turno))
+                steps_done.append("✅ Created 'TurnoNew': Día→1, Noche→2 (original kept).")
             else:
                 steps_done.append("⚠️ Column 'turno (dia o noche)' not found.")
 
             # ------------------------------------------------------
-            # STEP 3 – Coordinacion: create Coordinacion_num (A/B/C/D → 1/2/3/4)
+            # STEP 3 – Coordinacion: A=1, B=2, C=3, D=4 (CoordinacionNew)
             # ------------------------------------------------------
             if "Coordinacion" in df.columns:
                 def map_coord(val):
@@ -172,13 +209,13 @@ if uploaded_file is not None:
                     return pd.NA
 
                 idx = df.columns.get_loc("Coordinacion")
-                df.insert(idx + 1, "Coordinacion_num", df["Coordinacion"].apply(map_coord))
-                steps_done.append("✅ Created 'Coordinacion_num': A/B/C/D → 1/2/3/4 (original 'Coordinacion' preserved).")
+                df.insert(idx + 1, "CoordinacionNew", df["Coordinacion"].apply(map_coord))
+                steps_done.append("✅ Created 'CoordinacionNew': A→1, B→2, C→3, D→4 (original kept).")
             else:
                 steps_done.append("⚠️ Column 'Coordinacion' not found.")
 
             # ------------------------------------------------------
-            # STEP 4 – Malla → Banco (Level), Expansion, MallaID, Grid
+            # STEP 4 – Malla → Banco (Level), Expansion, MallaID
             # Format always: 3040-N17B-5018, 3010-S04-6018, etc.
             # ------------------------------------------------------
             if "Malla" in df.columns:
@@ -187,7 +224,8 @@ if uploaded_file is not None:
                         return (None, None, None)
                     txt = str(text).strip()
                     parts = txt.split("-")
-                    # Level / Banco = first 4-digit number in the string
+
+                    # Banco/Level = first 4-digit number anywhere
                     m_level = re.search(r"(\d{4})", txt)
                     banco = int(m_level.group(1)) if m_level else None
 
@@ -199,50 +237,38 @@ if uploaded_file is not None:
                         if m_exp:
                             expansion = int(m_exp.group(1))
 
-                    # Grid / MallaID = last 4-digit number (third segment usually)
-                    grid = None
+                    # MallaID = last 4-digit number (usually third segment)
+                    mallaid = None
                     if len(parts) >= 3:
                         last = parts[-1]
-                        m_grid = re.search(r"(\d{4})", last)
-                        if m_grid:
-                            grid = int(m_grid.group(1))
+                        m_mid = re.search(r"(\d{4})", last)
+                        if m_mid:
+                            mallaid = int(m_mid.group(1))
                     else:
                         # fallback: last 4-digit sequence anywhere
-                        m_grid = re.findall(r"(\d{4})", txt)
-                        if m_grid:
-                            grid = int(m_grid[-1])
+                        m_all = re.findall(r"(\d{4})", txt)
+                        if m_all:
+                            mallaid = int(m_all[-1])
 
-                    return banco, expansion, grid
+                    return banco, expansion, mallaid
 
                 bancos = []
                 expansions = []
-                grids = []
+                mallaids = []
 
                 for val in df["Malla"]:
-                    b, e, g = parse_malla(val)
+                    b, e, mid = parse_malla(val)
                     bancos.append(b)
                     expansions.append(e)
-                    grids.append(g)
+                    mallaids.append(mid)
 
-                df["Banco"] = bancos
-                df["Expansion"] = expansions
-                df["Grid"] = grids
+                # Original Malla preserved; MallaID added
+                idx_malla = df.columns.get_loc("Malla")
+                df.insert(idx_malla + 1, "Banco", bancos)
+                df.insert(idx_malla + 2, "Expansion", expansions)
+                df.insert(idx_malla + 3, "MallaID", mallaids)
 
-                # The old "Malla" becomes MallaID (grid ID / number)
-                df["Malla"] = df["Grid"]
-                df = df.rename(columns={"Malla": "MallaID"})
-
-                # Reorder so we have: ... MallaID, Banco, Expansion, Grid, Pozo ...
-                cols = list(df.columns)
-                for c in ["Banco", "Expansion", "Grid"]:
-                    if c in cols:
-                        cols.remove(c)
-                if "MallaID" in cols:
-                    idx = cols.index("MallaID")
-                    cols[idx:idx+1] = ["MallaID", "Banco", "Expansion", "Grid"]
-                    df = df[cols]
-
-                steps_done.append("✅ Parsed 'Malla' → MallaID, Banco(Level), Expansion, Grid.")
+                steps_done.append("✅ Parsed 'Malla' → Banco(Level), Expansion, MallaID (no separate Grid).")
             else:
                 steps_done.append("⚠️ Column 'Malla' not found in the dataset.")
 
@@ -252,35 +278,12 @@ if uploaded_file is not None:
             if "Pozo" in df.columns:
                 before_rows = len(df)
 
-                def transform_pozo(val):
-                    s = str(val).strip().lower().replace(" ", "")
-                    if s.startswith("aux"):
-                        return None
-                    # only letters → discard
-                    if re.fullmatch(r"[a-z]+", s):
-                        return None
-                    m = re.match(r"([a-z])(\d+)", s)
-                    if m:
-                        letter, num = m.group(1), m.group(2)
-                        if letter == "b":
-                            return int("100000" + num)
-                        elif letter == "c":
-                            return int("200000" + num)
-                        elif letter == "d":
-                            return int(num)
-                        else:
-                            return int(num)
-                    # pure digits
-                    if s.isdigit():
-                        return int(s)
-                    return None
-
-                df["Pozo"] = df["Pozo"].apply(transform_pozo)
+                df["Pozo"] = df["Pozo"].apply(transform_pozo_value)
                 df = df[df["Pozo"].notna()]
                 df = df[df["Pozo"] > 0]
 
                 deleted_rows = before_rows - len(df)
-                steps_done.append(f"✅ Cleaned 'Pozo' ({deleted_rows} invalid rows deleted).")
+                steps_done.append(f"✅ Cleaned 'Pozo' with B/C/D logic ({deleted_rows} invalid rows deleted).")
             else:
                 steps_done.append("⚠️ Column 'Pozo' not found.")
 
@@ -294,7 +297,6 @@ if uploaded_file is not None:
                 df["Banco"] = pd.NA
                 st.warning("⚠️ 'Banco' column missing — Z fallback (Banco+15) may be incomplete.")
 
-            # Convert coordinate columns to numeric safely where they exist
             coord_cols = [
                 "Coordenadas diseño X", "Coordenadas diseño Y", "Coordenadas diseño Z",
                 "Coordenada real inicioX", "Coordenada real inicio Y", "Coordena real inicio Z"
@@ -355,7 +357,7 @@ if uploaded_file is not None:
             # ------------------------------------------------------
             # STEP 7 – Dureza / RPM / Velocidad / Pulldown rules
             # ------------------------------------------------------
-            # Dureza: empty → 0; existing kept
+            # Dureza: empty → 0
             if "Dureza" in df.columns:
                 df["Dureza"] = pd.to_numeric(df["Dureza"], errors="coerce").fillna(0)
                 steps_done.append("✅ 'Dureza': empty values filled with 0.")
@@ -411,30 +413,38 @@ if uploaded_file is not None:
                 steps_done.append("⚠️ Column 'Largo de pozo real' not found.")
 
             # ------------------------------------------------------
-            # STEP 9 – Categoria de pozo: Produccion=1, Buffer=2, Auxiliar=3
+            # STEP 9 – Categoria de pozo → CategoriaNew (1,2,3)
             # ------------------------------------------------------
             if "Categoria de pozo" in df.columns:
-                df["Categoria de pozo"] = df["Categoria de pozo"].replace({
-                    "Produccion": 1,
-                    "Buffer": 2,
-                    "Auxiliar": 3
-                })
-                steps_done.append("✅ Mapped 'Categoria de pozo' → numeric codes (1,2,3).")
+                def map_cat(val):
+                    s = str(val).strip().lower()
+                    if s.startswith("prod"):
+                        return 1
+                    if s.startswith("buff"):
+                        return 2
+                    if s.startswith("aux"):
+                        return 3
+                    if s in ["1", "2", "3"]:
+                        return int(s)
+                    return pd.NA
+
+                idx_cat = df.columns.get_loc("Categoria de pozo")
+                df.insert(idx_cat + 1, "CategoriaNew", df["Categoria de pozo"].apply(map_cat))
+                steps_done.append("✅ Created 'CategoriaNew': Producción→1, Buffer→2, Auxiliar→3 (original kept).")
             else:
                 steps_done.append("⚠️ Column 'Categoria de pozo' not found.")
 
             # ------------------------------------------------------
-            # STEP 10 – Estatus de pozo: NO FILTER (kept as is)
-            # (Drilled filter will be applied ONLY in TXT export)
+            # STEP 10 – Estatus de pozo: NO FILTER in cleaning
+            # (Filter will be applied ONLY in TXT export)
             # ------------------------------------------------------
             if "Estatus de pozo" in df.columns:
-                steps_done.append("ℹ️ 'Estatus de pozo' is kept as-is. Filter 'Drilled only' will apply only for TXT export.")
+                steps_done.append("ℹ️ 'Estatus de pozo' kept as-is. Drilled-only filter will be applied only for TXT export.")
             else:
                 steps_done.append("⚠️ Column 'Estatus de pozo' not found.")
 
             # ------------------------------------------------------
-            # STEP 11 – Operator Mapping (from uploaded mapping file)
-            # Creates new column 'Operador_code', keeps original names
+            # STEP 11 – Operator Mapping (from uploaded mapping file) → OperadorNew
             # ------------------------------------------------------
             new_ops_df = None
             if "Operador" in df.columns:
@@ -462,7 +472,6 @@ if uploaded_file is not None:
                             ops_df["Codigo"] = pd.to_numeric(ops_df["Codigo"], errors="coerce").astype("Int64")
                             ops_df = ops_df.dropna(subset=["Codigo"])
 
-                            # Normalized name (no spaces, lower, no accents)
                             ops_df["Norm"] = ops_df["Nombre"].apply(
                                 lambda x: re.sub(r"\s+", "", normalize_text(x))
                             )
@@ -510,9 +519,10 @@ if uploaded_file is not None:
                                 new_ops.append((str(raw).strip(), code))
                                 return int(code)
 
-                            # Create new numeric column, keep original names
-                            idx = df.columns.get_loc("Operador")
-                            df.insert(idx + 1, "Operador_code", df["Operador"].apply(map_operator))
+                            # Create OperadorNew next to Operador
+                            idx_op = df.columns.get_loc("Operador")
+                            operador_new_series = df["Operador"].apply(map_operator)
+                            df.insert(idx_op + 1, "OperadorNew", operador_new_series)
 
                             if new_ops:
                                 new_ops_df = pd.DataFrame(new_ops, columns=["Nombre", "Codigo"])
@@ -526,8 +536,8 @@ if uploaded_file is not None:
                 steps_done.append("⚠️ Column 'Operador' not found.")
 
             # ------------------------------------------------------
-            # STEP 12 – Modo de perforacion mapping
-            # Create 'Modo_perforacion_num', keep original text
+            # STEP 12 – Modo de perforacion → ModoNew
+            # Autonomous=1, Manual=2, Teleremote=3
             # ------------------------------------------------------
             if "Modo de perforacion" in df.columns:
                 def map_modo(val):
@@ -538,11 +548,13 @@ if uploaded_file is not None:
                         return 2
                     if s.startswith("tele"):
                         return 3
+                    if s in ["1", "2", "3"]:
+                        return int(s)
                     return pd.NA
 
-                idx = df.columns.get_loc("Modo de perforacion")
-                df.insert(idx + 1, "Modo_perforacion_num", df["Modo de perforacion"].apply(map_modo))
-                steps_done.append("✅ Created 'Modo_perforacion_num': Autonomous→1, Manual→2, Teleremote→3 (original kept).")
+                idx_modo = df.columns.get_loc("Modo de perforacion")
+                df.insert(idx_modo + 1, "ModoNew", df["Modo de perforacion"].apply(map_modo))
+                steps_done.append("✅ Created 'ModoNew': Autonomous→1, Manual→2, Teleremote→3 (original kept).")
             else:
                 steps_done.append("⚠️ Column 'Modo de perforacion' not found.")
 
@@ -568,7 +580,7 @@ if uploaded_file is not None:
         st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
 
         # ==========================================================
-        # DOWNLOAD SECTION (MAIN DATA)
+        # DOWNLOAD SECTION (EXCEL + CSV)
         # ==========================================================
         st.markdown("---")
         st.subheader("💾 Export Cleaned Autonomía File")
@@ -584,16 +596,14 @@ if uploaded_file is not None:
             )
             export_df = df[selected_columns] if selected_columns else df
 
-        # ------------ Excel ------------
         excel_buffer = io.BytesIO()
         export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
         excel_buffer.seek(0)
 
-        # ------------ CSV (no extra filters) ------------
         csv_buffer = io.StringIO()
         export_df.to_csv(csv_buffer, index=False)
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             st.download_button(
                 "📘 Download Excel File",
@@ -608,26 +618,6 @@ if uploaded_file is not None:
                 csv_buffer.getvalue(),
                 file_name="Escondida_Autonomia_Cleaned.csv",
                 mime="text/csv",
-                use_container_width=True
-            )
-
-        # ------------ TXT with Drilled-only filter ------------
-        # Apply Estatus de pozo = 'Drilled' ONLY for TXT
-        df_txt = export_df.copy()
-        if "Estatus de pozo" in df_txt.columns:
-            mask_drilled = df_txt["Estatus de pozo"].astype(str).str.strip().str.lower() == "drilled"
-            df_txt = df_txt[mask_drilled]
-
-        txt_buffer = io.StringIO()
-        # Pipe-separated TXT (you can change sep="|" to ";" if you prefer)
-        df_txt.to_csv(txt_buffer, index=False, sep="|")
-
-        with col3:
-            st.download_button(
-                "📄 Download TXT (Drilled only)",
-                txt_buffer.getvalue(),
-                file_name="Escondida_Autonomia_Drilled.txt",
-                mime="text/plain",
                 use_container_width=True
             )
 
@@ -671,6 +661,30 @@ if uploaded_file is not None:
                 )
             except Exception as e:
                 st.warning(f"⚠️ Could not build updated operators file: {e}")
+
+        # ==========================================================
+        # TXT EXPORT — ONLY DRILLED + CategoriaNew 1–2
+        # ==========================================================
+        st.markdown("---")
+        st.subheader("📄 Export TXT (Drilled + Categoria 1–2)")
+
+        # Work from full cleaned df, not from export_df
+        df_txt = df.copy()
+        if "Estatus de pozo" in df_txt.columns:
+            df_txt = df_txt[df_txt["Estatus de pozo"].astype(str).str.strip().str.lower() == "drilled"]
+        if "CategoriaNew" in df_txt.columns:
+            df_txt = df_txt[df_txt["CategoriaNew"].isin([1, 2])]
+
+        txt_buffer = io.StringIO()
+        df_txt.to_csv(txt_buffer, index=False, sep="|")
+
+        st.download_button(
+            "📄 Download TXT (Drilled + Cat 1–2)",
+            txt_buffer.getvalue(),
+            file_name="Escondida_Autonomia_Drilled.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.caption("Built by Maxam - Omar El Kendi -")
