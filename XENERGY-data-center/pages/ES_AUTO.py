@@ -679,7 +679,7 @@ if uploaded_file is not None:
         df_txt.to_csv(txt_buffer, index=False, sep="|")
 
         st.download_button(
-            "📄 Download TXT (Drilled + Cat 1–2)",
+            "📄 Download TXT (Drilled Only)",
             txt_buffer.getvalue(),
             file_name="Escondida_Autonomia_Drilled.txt",
             mime="text/plain",
@@ -694,3 +694,4 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload the Autonomía Excel file (and optionally the Operators mapping file) to begin.")
+
