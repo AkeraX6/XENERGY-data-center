@@ -10,11 +10,11 @@ st.markdown(
     "<h2 style='text-align:center;'>DGM — QAQC Data Filter (Multi-file)</h2>",
     unsafe_allow_html=True
 )
-st.markdown("<p style='text-align:center; color:gray;'>Automatic cleaning, merging, and validation of QAQC drilling data (Excel & CSV supported).</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:gray;'>Automatic cleaning, merging, and validation of QAQC drilling data.</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Back button
-if st.button("⬅️ Back to Menu"):
+# 🔙 Back to Dashboard
+if st.button("⬅️ Back to Menu", key="back_qaqc"):
     st.session_state.page = "dashboard"
     st.rerun()
 
@@ -22,180 +22,296 @@ if st.button("⬅️ Back to Menu"):
 # FILE UPLOAD
 # ==================================================
 uploaded_files = st.file_uploader(
-    "📤 Upload one or more QAQC files",
+    "📤 Upload one or multiple QAQC files (Excel/CSV)",
     type=["xlsx", "xls", "csv"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    key="uploader_qaqc"
 )
 
 if not uploaded_files:
-    st.info("📂 Upload files to begin.")
+    st.info("📂 Please upload at least one Excel or CSV file to begin.")
     st.stop()
 
 # ==================================================
-# SAFE FILE READER
+# FILE READER FUNCTION
 # ==================================================
 def read_any_file(file):
+    """Reads Excel or CSV (auto-detects separator)."""
     name = file.name.lower()
     try:
         if name.endswith(".csv"):
             sample = file.read(2048).decode("utf-8", errors="ignore")
             file.seek(0)
             sep = ";" if sample.count(";") > sample.count(",") else ","
-            return pd.read_csv(file, sep=sep)
-        return pd.read_excel(file)
-    except:
+            df = pd.read_csv(file, sep=sep)
+        else:
+            df = pd.read_excel(file)
+
+        return df
+    except Exception as e:
+        st.error(f"❌ Error reading {file.name}: {e}")
         return None
 
-dfs = [read_any_file(f) for f in uploaded_files]
-dfs = [x for x in dfs if x is not None]
+# Read & merge
+dfs = [read_any_file(f) for f in uploaded_files if f is not None]
+dfs = [d for d in dfs if d is not None]
 
-if len(dfs) == 0:
-    st.error("❌ No valid files.")
+if not dfs:
+    st.error("❌ No valid files could be read.")
     st.stop()
 
 df = pd.concat(dfs, ignore_index=True)
-st.success(f"✔ Merged {len(dfs)} files — Total rows: {len(df)}")
+
+st.success(f"✅ Successfully merged {len(dfs)} files — total rows: {len(df)}")
 st.dataframe(df.head(10), use_container_width=True)
 
 # ==================================================
-# PROCESSING STEPS
+# CLEANING STEPS
 # ==================================================
-steps = []
-total_removed = 0
+with st.expander("⚙️ Processing Steps", expanded=False):
 
-# STEP 1 — Clean Density
-if "Density" in df.columns:
-    before = len(df)
-    df["Density"] = pd.to_numeric(df["Density"], errors="coerce")
-    df = df[df["Density"] > 0]
-    deleted = before - len(df)
-    total_removed += deleted
-    steps.append(f"Density cleaned → removed {deleted} rows.")
+    steps_done = []
+    total_deleted = 0
 
-# STEP 2 — Negative / Invalid Coordinates
-if "Local X (Design)" in df.columns and "Local Y (Design)" in df.columns:
-    before = len(df)
-    df["Local X (Design)"] = pd.to_numeric(df["Local X (Design)"], errors="coerce")
-    df["Local Y (Design)"] = pd.to_numeric(df["Local Y (Design)"], errors="coerce")
-    df = df.dropna(subset=["Local X (Design)", "Local Y (Design)"])
-    df = df[(df["Local X (Design)"] >= 0) & (df["Local Y (Design)"] >= 0)]
-    deleted = before - len(df)
-    total_removed += deleted
-    steps.append(f"Removed {deleted} invalid coordinate rows.")
+    # --- STEP 1 – Clean Density ---
+    if "Density" in df.columns:
+        before = len(df)
 
-# STEP 3 — Clean Borehole column
-bh_col = next((c for c in df.columns if "borehole" in c.lower() or "pozo" in c.lower() or "hole" in c.lower()), None)
-if bh_col:
-    before = len(df)
-    df = df[~df[bh_col].astype(str).str.contains(r"\baux\b|\baux\d+|\ba\d+\b", flags=re.IGNORECASE, na=False)]
-    df[bh_col] = df[bh_col].astype(str).str.replace(r"(\d+)_\d+", r"\1", regex=True)
-    deleted = before - len(df)
-    total_removed += deleted
-    steps.append(f"Cleaned Borehole '{bh_col}' → {deleted} AUX rows removed.")
+        df["Density"] = df["Density"].astype(str)
+        df = df[~df["Density"].str.contains("[A-Za-z]", na=False)]
+        df = df[~df["Density"].str.contains("-", na=False)]
+        df["Density"] = pd.to_numeric(df["Density"], errors="coerce")
+        df = df[df["Density"] > 0]
 
-# STEP 4 — Extract Expansion + Level from Blast
-if "Blast" in df.columns:
-    df["Expansion"] = df["Blast"].astype(str).str.extract(r"F[_\-]?0*(\d+)", expand=False)
-    df["Level"] = df["Blast"].astype(str).str.extract(r"(\d{4})", expand=False)
+        df = df.dropna(subset=["Density"])
+        deleted = before - len(df)
+        total_deleted += deleted
 
-    df["Expansion"] = pd.to_numeric(df["Expansion"], errors="coerce")
-    df["Level"] = pd.to_numeric(df["Level"], errors="coerce")
+        steps_done.append(f"🧹 Cleaned Density → removed {deleted} rows")
+    else:
+        steps_done.append("⚠️ Density column not found.")
 
-    cols = list(df.columns)
-    bi = cols.index("Blast")
-    for c in ["Expansion", "Level"]:
-        if c in cols: cols.remove(c)
-    cols[bi+1:bi+1] = ["Expansion", "Level"]
-    df = df[cols]
+    # --- STEP 2 – Remove negative coordinates ---
+    if "Local X (Design)" in df.columns and "Local Y (Design)" in df.columns:
+        before = len(df)
 
-    steps.append("Extracted & placed Expansion + Level next to Blast.")
+        df["Local X (Design)"] = pd.to_numeric(df["Local X (Design)"], errors="coerce")
+        df["Local Y (Design)"] = pd.to_numeric(df["Local Y (Design)"], errors="coerce")
+
+        df = df.dropna(subset=["Local X (Design)", "Local Y (Design)"])
+        df = df[(df["Local X (Design)"] >= 0) & (df["Local Y (Design)"] >= 0)]
+
+        deleted = before - len(df)
+        total_deleted += deleted
+
+        steps_done.append(f"🧭 Removed {deleted} rows with invalid coordinates")
+    else:
+        steps_done.append("⚠️ Coordinate columns missing.")
+
+    # --- STEP 3 – Clean Borehole (remove AUX + fix 45_8) ---
+    borehole_col = None
+    for col in df.columns:
+        if "Borehole" in col or "Pozo" in col or "Hole" in col:
+            borehole_col = col
+            break
+
+    if borehole_col:
+        before = len(df)
+
+        df = df[~df[borehole_col].astype(str).str.contains(
+            r"\baux\b|\baux\d+|\ba\d+\b",
+            flags=re.IGNORECASE,
+            na=False
+        )]
+
+        df[borehole_col] = df[borehole_col].astype(str).str.replace(
+            r"(\d+)_\d+", r"\1", regex=True
+        )
+
+        deleted = before - len(df)
+        total_deleted += deleted
+
+        steps_done.append(f"🔧 Cleaned Borehole → removed {deleted} AUX rows")
+    else:
+        steps_done.append("⚠️ Borehole column not found.")
+
+    # --- STEP 4 – Extract EXPANSION + LEVEL ---
+    if "Blast" in df.columns:
+
+        df["Expansion"] = df["Blast"].astype(str).str.extract(r"F0*(\d+)", expand=False)
+
+        # FIXED LEVEL EXTRACTION (handles many formats)
+        def extract_level(text):
+            if pd.isna(text):
+                return None
+            text = str(text).upper()
+
+            # First try BXXXX
+            m = re.search(r"B0*(\d{3,4})", text)
+            if m:
+                return m.group(1)
+
+            # Try 4-digit level anywhere
+            m = re.search(r"(2\d{3}|3\d{3}|4\d{3})", text)
+            if m:
+                return m.group(1)
+
+            return None
+
+        df["Level"] = df["Blast"].apply(extract_level)
+
+        # Place next to Blast
+        cols = list(df.columns)
+        b_index = cols.index("Blast")
+        for c in ["Expansion", "Level"]:
+            if c in cols:
+                cols.remove(c)
+        cols[b_index + 1:b_index + 1] = ["Expansion", "Level"]
+        df = df[cols]
+
+        steps_done.append("📌 Extracted Expansion & Level (now placed next to Blast)")
+    else:
+        steps_done.append("⚠️ Blast column not found.")
+
+    # --- STEP 5 – Cross-fill Hole Length ---
+    if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
+        before = len(df)
+
+        df["Hole Length (Design)"] = pd.to_numeric(df["Hole Length (Design)"], errors="coerce").replace(0, pd.NA)
+        df["Hole Length (Actual)"] = pd.to_numeric(df["Hole Length (Actual)"], errors="coerce").replace(0, pd.NA)
+
+        df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
+        df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
+
+        df = df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all")
+
+        deleted = before - len(df)
+        total_deleted += deleted
+
+        steps_done.append(f"📏 Cross-filled Hole Length → removed {deleted} empty rows")
+    else:
+        steps_done.append("⚠️ Hole Length columns missing.")
+
+    # --- STEP 6 – Cross-fill Explosive ---
+    if "Explosive (kg) (Design)" in df.columns and "Explosive (kg) (Actual)" in df.columns:
+        before = len(df)
+
+        df["Explosive (kg) (Design)"] = pd.to_numeric(df["Explosive (kg) (Design)"], errors="coerce").replace(0, pd.NA)
+        df["Explosive (kg) (Actual)"] = pd.to_numeric(df["Explosive (kg) (Actual)"], errors="coerce").replace(0, pd.NA)
+
+        df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
+        df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
+
+        df = df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all")
+
+        deleted = before - len(df)
+        total_deleted += deleted
+
+        steps_done.append(f"💥 Cross-filled Explosive → removed {deleted} empty rows")
+    else:
+        steps_done.append("⚠️ Explosive columns missing.")
+
+    # --- STEP 7 – Clean Asset column ---
+    asset_col = None
+    for col in df.columns:
+        if "Asset" in col:
+            asset_col = col
+            break
+
+    if asset_col:
+        before_nan = df[asset_col].isna().sum()
+
+        df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
+        df[asset_col] = pd.to_numeric(df[asset_col], errors="coerce")
+
+        after_nan = df[asset_col].isna().sum()
+        fixed = before_nan - after_nan
+
+        steps_done.append(f"🏷️ Cleaned Asset → {fixed} values fixed")
+
+    else:
+        steps_done.append("⚠️ Asset column not found.")
+
+    # --- Summary lines ---
+    steps_done.append(f"🧮 Total rows deleted: **{total_deleted}**")
+
+    for step in steps_done:
+        st.markdown(
+            f"<div style='background:#eef8f0;padding:8px;border-radius:6px;margin-bottom:6px;'>{step}</div>",
+            unsafe_allow_html=True
+        )
+
+# ==================================================
+# DATE RANGE FOR FILE NAME
+# ==================================================
+date_col = None
+for col in df.columns:
+    if "Date" in col or "Fecha" in col:
+        date_col = col
+        break
+
+file_suffix = ""
+if date_col:
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    valid_dates = df[date_col].dropna()
+    if not valid_dates.empty:
+        min_date = valid_dates.min().strftime("%d%m%y")
+        max_date = valid_dates.max().strftime("%d%m%y")
+        file_suffix = f"_{min_date}_{max_date}"
+
+# ==================================================
+# SHOW CLEANED RESULTS
+# ==================================================
+st.markdown("---")
+st.subheader("✅ Cleaned & Merged Data Preview")
+st.dataframe(df.head(15), use_container_width=True)
+st.success(f"Final dataset: {len(df)} rows × {len(df.columns)} columns")
+
+# ==================================================
+# DOWNLOAD SECTION
+# ==================================================
+option = st.radio("Download:", ["⬇️ All Columns", "🧩 Selected Columns"], key="dlchoice_qaqc")
+
+if option == "⬇️ All Columns":
+    export_df = df
 else:
-    steps.append("⚠ 'Blast' not found.")
+    selected_columns = st.multiselect(
+        "Select columns to export:",
+        options=list(df.columns),
+        default=[],
+        key="colselect_qaqc"
+    )
+    export_df = df[selected_columns] if selected_columns else df
 
-# STEP 5 — Cross-fill Hole Length
-if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
-    before = len(df)
-    for c in ["Hole Length (Design)", "Hole Length (Actual)"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
-    df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
-    df = df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all")
-    deleted = before - len(df)
-    total_removed += deleted
-    steps.append(f"Cross-filled Hole Length → removed {deleted} empty rows.")
+# Export Excel
+excel_buf = io.BytesIO()
+export_df.to_excel(excel_buf, index=False, engine="openpyxl")
+excel_buf.seek(0)
 
-# STEP 6 — Cross-fill Explosive
-if "Explosive (kg) (Design)" in df.columns and "Explosive (kg) (Actual)" in df.columns:
-    before = len(df)
-    for c in ["Explosive (kg) (Design)", "Explosive (kg) (Actual)"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
-    df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
-    df = df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all")
-    deleted = before - len(df)
-    total_removed += deleted
-    steps.append(f"Cross-filled Explosive → removed {deleted} empty rows.")
+# Export CSV
+csv_buf = io.StringIO()
+export_df.to_csv(csv_buf, index=False, sep=";")
 
-# STEP 7 — Clean Asset
-asset_col = next((c for c in df.columns if "asset" in c.lower()), None)
-if asset_col:
-    df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
-    df[asset_col] = pd.to_numeric(df[asset_col], errors="coerce")
-    steps.append("Cleaned Asset → extracted only numeric codes.")
+file_base = f"DGM_QAQC_Cleaned{file_suffix}"
 
-# Final step summary
-steps.append(f"TOTAL rows removed: {total_removed}")
+col1, col2 = st.columns(2)
+with col1:
+    st.download_button(
+        "📘 Export Excel",
+        excel_buf,
+        file_name=f"{file_base}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="dl_excel_qaqc"
+    )
+with col2:
+    st.download_button(
+        "📗 Export CSV",
+        csv_buf.getvalue(),
+        file_name=f"{file_base}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="dl_csv_qaqc"
+    )
 
-# ==================================================
-# SHOW PROCESSING SUMMARY
-# ==================================================
-st.markdown("---")
-st.subheader("⚙️ Processing Summary")
-for s in steps:
-    st.success("• " + s)
-
-# ==================================================
-# PREVIEW CLEANED DATA
-# ==================================================
-st.markdown("---")
-st.subheader("📊 Cleaned Data Preview")
-st.dataframe(df.head(20), use_container_width=True)
-st.info(f"Final ➜ {len(df)} rows × {len(df.columns)} columns")
-
-# ==================================================
-# DOWNLOAD OPTIONS
-# ==================================================
-st.markdown("---")
-st.subheader("💾 Export Cleaned File")
-
-option = st.radio(
-    "Choose:",
-    ["⬇️ Download All Columns", "🧩 Download Selected Columns"]
-)
-
-if option == "🧩 Download Selected Columns":
-    cols = st.multiselect("Select columns:", df.columns, df.columns)
-    df_export = df[cols]
-else:
-    df_export = df
-
-excel = io.BytesIO()
-df_export.to_excel(excel, index=False, engine="openpyxl")
-excel.seek(0)
-
-txt = io.StringIO()
-df_export.to_csv(txt, index=False, sep="\t")
-
-st.download_button(
-    "📘 Excel",
-    excel,
-    file_name="DGM_QAQC_Cleaned.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
-st.download_button(
-    "📄 TXT",
-    txt.getvalue(),
-    file_name="DGM_QAQC_Cleaned.txt",
-    mime="text/plain"
-)
+st.caption("Built by Maxam — Omar El Kendi")
