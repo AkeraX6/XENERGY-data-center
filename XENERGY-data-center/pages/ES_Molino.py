@@ -1,168 +1,184 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
-import re
-from datetime import datetime
 
 # ======================================================
-# PAGE HEADER
+# PAGE TITLE & BACK BUTTON
 # ======================================================
-st.markdown(
-    "<h2 style='text-align:center;'>Escondida — Molino Data Processor</h2>"
-    "<p style='text-align:center;color:gray;'>Multi-file merging, automatic noise removal & SAG data codification</p>"
-    "<hr>",
-    unsafe_allow_html=True,
-)
+col1, col2 = st.columns([0.15, 0.85])
+with col1:
+    if st.button("⬅️ Back to Menu", key="back_molino"):
+        st.session_state.page = "dashboard"
+        st.rerun()
 
-# Back button
-if st.button("⬅️ Back to Menu", key="back_es_molino"):
-    st.session_state.page = "dashboard"
-    st.rerun()
+with col2:
+    st.markdown("### ⚙️ ES — Molino Data Processor")
+
+st.info("📌 You can upload multiple CSV / Excel files at once.")
 
 # ======================================================
-# FILE UPLOAD (MULTIPLE)
+# FILE UPLOAD
 # ======================================================
 uploaded_files = st.file_uploader(
-    "📤 Upload Molino Files (CSV or Excel) — Multiple Allowed",
+    "📤 Upload Molino Data Files",
     type=["csv", "xlsx", "xls"],
     accept_multiple_files=True
 )
 
 if not uploaded_files:
-    st.info("📂 Please upload one or more files to begin.")
     st.stop()
 
 # ======================================================
-# READ & MERGE ALL FILES
+# READ & MERGE FILES
 # ======================================================
-dataframes = []
+merged_df = pd.DataFrame()
+errors = []
+
 for file in uploaded_files:
     try:
-        if file.name.lower().endswith(".csv"):
-            df = pd.read_csv(file, sep=";", header=1)
+        if file.name.endswith(".csv"):
+            df = pd.read_csv(file, sep=";", engine="python", dtype=str)
         else:
-            df = pd.read_excel(file, header=1)
-        dataframes.append(df)
+            df = pd.read_excel(file, dtype=str)
+
+        # Normalize column names
+        df.columns = df.columns.str.strip().str.lower()
+
+        # Validate required columns
+        if "fuente de datos" not in df.columns or "hora" not in df.columns or "valor" not in df.columns:
+            errors.append(file.name)
+            continue
+
+        merged_df = pd.concat([merged_df, df], ignore_index=True)
+
     except Exception as e:
-        st.error(f"⚠️ Error reading {file.name}: {e}")
+        errors.append(f"{file.name} → {e}")
 
-if not dataframes:
-    st.error("❌ No valid files loaded. Check file format.")
+if merged_df.empty:
+    st.error("❌ No valid files uploaded. Check column names and format.")
     st.stop()
 
-df = pd.concat(dataframes, ignore_index=True)
+if errors:
+    st.warning(f"⚠️ Some files were skipped: {errors}")
 
-st.success(f"📌 Loaded & merged {len(uploaded_files)} files → {len(df)} rows")
-
-# Standardize column names
-df.columns = df.columns.astype(str).str.strip()
-
-# ======================================================
-# COLUMN CHECK
-# ======================================================
-if "Fuente de datos" not in df.columns:
-    st.error("❌ Missing 'Fuente de datos' column in input files!")
-    st.stop()
-if "Valor" not in df.columns:
-    st.error("❌ Missing 'Valor' column in input files!")
-    st.stop()
-if "Hora" not in df.columns:
-    st.error("❌ Missing 'Hora' column in input files!")
-    st.stop()
+# Rename columns properly after merge
+merged_df.rename(columns={"fuente de datos": "Fuente de datos",
+                          "hora": "Hora",
+                          "valor": "Valor"}, inplace=True)
 
 # ======================================================
-# CREATE TYPE COLUMN
+# ADD TYPE COLUMN
 # ======================================================
-def detect_type(s):
-    s = s.lower()
-    if "fino" in s: return 1
-    if "grueso" in s: return 2
-    if "interm" in s: return 3
-    if "tph" in s and "sag" in s: return 4
-    if "pres" in s: return 5
-    if "pot" in s: return 6
-    if "cons" in s: return 7
-    if re.search(r"ch\d", s): return 8
-    if "solido" in s: return 9
-    return None
+def detect_type(text):
+    text = text.lower()
+    if "fino" in text:
+        return 1
+    if "grueso" in text:
+        return 2
+    if "interm" in text:
+        return 3
+    if "tph" in text and "sag" in text:
+        return 4
+    if "pres" in text:
+        return 5
+    if "pot" in text:
+        return 6
+    if "cons" in text:
+        return 7
+    if "ch" in text:
+        return 8
+    if "solido" in text:
+        return 9
+    return np.nan
 
-df["Type"] = df["Fuente de datos"].apply(detect_type)
-
-# ======================================================
-# CODE MAPPING
-# ======================================================
-mapping = {
-    "lc_finos_sag1_new.value": 1, "lc_finos_sag2_new.value": 2, "lc_finos_sag3_new.value": 3,
-    "ls1_finos_new.value": 4, "ls2_finos_new.value": 5,
-    "lc_grueso_sag1_new.value": 1, "lc_grueso_sag2_new.value": 2,
-    "lc_grueso_sag3_new.value": 3, "ls1_grueso_new.value": 4, "ls2_grueso_new.value": 5,
-    "lc_interm_sag1_new.value": 1, "lc_interm_sag2_new.value": 2,
-    "lc_interm_sag3_new.value": 3, "ls1_interm_new.value": 4, "ls2_interm_new.value": 5,
-    "tph_sag1.value": 1, "tph_sag2.value": 2, "tph_sag3.value": 3,
-    "tph_sag4.value": 4, "tph_sag5.value": 5,
-    "pres_sag1.value": 1, "pres_sag2.value": 2, "pres_sag3.value": 3,
-    "pres_sag4.value": 4, "pres_sag5.value": 5,
-    "pot_sag1.value": 1, "pot_sag2.value": 2, "pot_sag3.value": 3,
-    "pot_sag4.value": 4, "pot_sag5.value": 5,
-    "cons_energ_sag4.value": 4, "cons_energ_sag5.value": 5,
-    "ch1_tph.value": 1, "ch2_tph.value": 2, "ch3_tph.value": 3,
-    "ch4_tph.value": 4, "ch5_tph.value": 5,
-    "ls1_%solidoalimsag4.value": 1, "ls2_%solidoalimsg5.value": 2
-}
-
-def detect_code(s):
-    s_clean = s.lower().replace(" ", "")
-    return mapping.get(s_clean, None)
-
-df["Code"] = df["Fuente de datos"].apply(detect_code)
+merged_df["Type"] = merged_df["Fuente de datos"].apply(detect_type)
 
 # ======================================================
-# SPLIT DATE & TIME
+# ADD CODE COLUMN (specific SAG numbering)
 # ======================================================
-hora = pd.to_datetime(df["Hora"], errors="coerce", dayfirst=True)
+def detect_code(text):
+    import re
+    match = re.search(r"(\d)", text)
+    if match:
+        return int(match.group(1))
+    return np.nan
 
-df["Day"] = hora.dt.day
-df["Month"] = hora.dt.month
-df["Year"] = hora.dt.year
-df["Hour"] = hora.dt.hour
-df["Minute"] = hora.dt.minute
+merged_df["Code"] = merged_df["Fuente de datos"].apply(detect_code)
+
+# ======================================================
+# PROCESS DATE-TIME COLUMN
+# ======================================================
+dt = pd.to_datetime(merged_df["Hora"], errors="coerce")
+merged_df["Day"] = dt.dt.day
+merged_df["Month"] = dt.dt.month
+merged_df["Year"] = dt.dt.year
+merged_df["Hour"] = dt.dt.hour
+merged_df["Minute"] = dt.dt.minute
 
 # ======================================================
 # CLEAN VALUE COLUMN
 # ======================================================
-df["Valor"] = df["Valor"].astype(str)
-df["Valor"] = df["Valor"].str.replace(",", ".", regex=False)
+merged_df["Value"] = (
+    merged_df["Valor"]
+    .astype(str)
+    .str.replace(",", ".", regex=False)
+)
 
-df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+merged_df["Value"] = pd.to_numeric(merged_df["Value"], errors="coerce")
 
-df = df[df["Valor"] > 0]  # remove invalid
-
-# ======================================================
-# FINAL EXPORT STRUCTURE
-# ======================================================
-excel_cols = ["Fuente de datos", "Type", "Code", "Day", "Month", "Year", "Hour", "Minute", "Valor"]
-txt_cols = ["Type", "Code", "Day", "Month", "Year", "Hour", "Minute", "Valor"]
-
-final_excel = df[excel_cols].copy()
-final_txt = df[txt_cols].copy()
+# Remove invalid values
+merged_df = merged_df[
+    (merged_df["Value"].notna()) &
+    (merged_df["Value"] > 0)
+]
 
 # ======================================================
-# DOWNLOAD
+# REMOVE COLUMNS NOT NEEDED
+# ======================================================
+merged_df.drop(columns=["Valor", "Hora"], inplace=True)
+
+# ======================================================
+# SORT FINAL COLUMNS ORDER
+# ======================================================
+excel_output = merged_df[
+    ["Fuente de datos", "Type", "Code", "Day", "Month", "Year", "Hour", "Minute", "Value"]
+]
+
+txt_output = excel_output.drop(columns=["Fuente de datos"])
+
+st.success("✅ Processing Completed Successfully!")
+
+st.subheader("📝 Data Preview")
+st.dataframe(excel_output.head(20), use_container_width=True)
+
+# ======================================================
+# DOWNLOADS
 # ======================================================
 excel_buf = io.BytesIO()
-final_excel.to_excel(excel_buf, index=False, engine="openpyxl")
+excel_output.to_excel(excel_buf, index=False, engine="openpyxl")
 excel_buf.seek(0)
 
-txt_data = final_txt.to_csv(index=False, sep=";")
+txt_buf = io.StringIO()
+txt_output.to_csv(txt_buf, index=False, sep="\t")
 
-col1, col2 = st.columns(2)
-with col1:
-    st.download_button("📘 Download Excel", excel_buf, "ES_Molino_Merged.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       use_container_width=True)
-with col2:
-    st.download_button("📄 Download TXT", txt_data, "ES_Molino_Merged.txt",
-                       mime="text/plain",
-                       use_container_width=True)
+colA, colB = st.columns(2)
 
-st.success("🎯 Processing Complete — Merged Dataset Ready!")
+with colA:
+    st.download_button(
+        label="📘 Download Excel Result",
+        data=excel_buf,
+        file_name="ES_Molino_Output.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+with colB:
+    st.download_button(
+        label="📗 Download TXT Result",
+        data=txt_buf.getvalue(),
+        file_name="ES_Molino_Output.txt",
+        mime="text/plain",
+        use_container_width=True
+    )
+
