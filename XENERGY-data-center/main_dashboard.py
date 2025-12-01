@@ -90,7 +90,7 @@ def dashboard_page():
                 "QAQC": "QAQC",
                 "Fragmentation": "FRAG",
                 "Excavation": "EXCA",
-                "Shovle Position": "POSP"
+                "Shovle Position": "POSP",
                 "Mill": "Molino"
             }
 
@@ -136,6 +136,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
