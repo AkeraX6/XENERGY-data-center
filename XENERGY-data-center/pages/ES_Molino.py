@@ -90,7 +90,7 @@ def detect_type(text: str):
         return 5
     if "pot" in t:
         return 6
-    if "cons_energ" in t or "consenerg" in t:
+    if "cons_energ" in t or "consenerg" in t or "consnergia" in t:
         return 7
     if "ch" in t and "_tph" in t:
         return 8
@@ -152,9 +152,12 @@ CODE_MAP = {
     "ls1_consenergSAG4.Value": 4,
     "ls1_consenergiaSAG4.Value": 4,
     "cons_energ_sag4.Value": 4,
+    "ls1_consnergiaSAG4.Value" : 4,
     "cons_energ_sag5.Value": 5,
     "ls2_consenergSAG5.Value": 5,
     "ls2_consenergiaSAG5.Value": 5,
+    "ls2_consnergiaSAG5.Value" : 5,
+    
 
     "ch1_tph.Value": 1,
     "ch2_tph.Value": 2,
