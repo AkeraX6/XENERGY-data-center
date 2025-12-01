@@ -6,16 +6,16 @@ import io
 # ======================================================
 # PAGE TITLE & BACK BUTTON
 # ======================================================
-col1, col2 = st.columns([0.15, 0.85])
-with col1:
-    if st.button("⬅️ Back to Menu", key="back_molino"):
-        st.session_state.page = "dashboard"
-        st.rerun()
-
-with col2:
-    st.markdown("### ⚙️ ES — Molino Data Processor")
-
-st.info("📌 You can upload multiple CSV / Excel files at once.")
+st.markdown(
+    """
+    <div style="text-align:center; margin-top: -25px;">
+        <h2>⚙️ ES — Molino Data Processor</h2>
+        <p style="color:gray;">Automated cleaning & structuring of SAG mill sensor data</p>
+    </div>
+    <hr>
+    """,
+    unsafe_allow_html=True
+)
 
 # ======================================================
 # FILE UPLOAD
