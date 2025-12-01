@@ -75,7 +75,7 @@ def dashboard_page():
     mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
-        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position"]
+        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position", "Mill"]
     )
 
     proceed_button = st.button("🚀 Proceed", use_container_width=True)
@@ -91,6 +91,7 @@ def dashboard_page():
                 "Fragmentation": "FRAG",
                 "Excavation": "EXCA",
                 "Shovle Position": "POSP"
+                "Mill": "Molino"
             }
 
             mine_code = mine_codes[mine]
@@ -135,6 +136,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
