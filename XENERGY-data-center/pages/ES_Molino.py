@@ -137,7 +137,7 @@ CODE_MAP = {
     "pres_sag4.Value": 4,
     "ls1_presdescansoSAG4.Value": 4,
     "pres_sag5.Value": 5,
-    "ls1_presdescansoSAG5.Value": 5,
+    "ls2_presdescansoSAG5.Value": 5,
 
     "pot_sag1.Value": 1,
     "lc_potSAG1.Value": 1,
@@ -150,9 +150,11 @@ CODE_MAP = {
     "ls2_potSAG5.Value": 5,
     "pot_sag5.Value": 5,
     "ls1_consenergSAG4.Value": 4,
+    "ls1_consenergiaSAG4.Value": 4,
     "cons_energ_sag4.Value": 4,
     "cons_energ_sag5.Value": 5,
     "ls2_consenergSAG5.Value": 5,
+    "ls2_consenergiaSAG5.Value": 5,
 
     "ch1_tph.Value": 1,
     "ch2_tph.Value": 2,
