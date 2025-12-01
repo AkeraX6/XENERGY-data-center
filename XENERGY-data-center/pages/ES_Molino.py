@@ -13,7 +13,7 @@ st.markdown(
 )
 
 # Back button
-if st.button("⬅️ Back to Menu"):
+if st.button("⬅️ Back to Menu", key="back_to_menu_molino"):
     st.session_state.page = "dashboard"
     st.rerun()
 
