@@ -35,7 +35,6 @@ except Exception as e:
     st.error(f"❌ Could not read the file: {e}")
     st.stop()
 
-# Clean column names
 df.columns = (
     df.columns.astype(str)
     .str.strip()
@@ -70,6 +69,7 @@ col_pala = find_col(df, "pala")
 col_p50 = find_col(df, "p50")
 col_p80 = find_col(df, "p80")
 col_pasante = find_col(df, "% pasante", "pasante", "pasante 2", "<2", "2 pulgadas")
+col_resi = find_col(df, "resi", "residual")
 
 if not all([col_fecha, col_id, col_pala, col_p50, col_p80, col_pasante]):
     st.error("❌ Some required columns are missing. Please check your file headers.")
@@ -80,81 +80,69 @@ if not all([col_fecha, col_id, col_pala, col_p50, col_p80, col_pasante]):
 # FUNCTIONS
 # ======================================================
 def extract_expansion(text):
-    if pd.isna(text):
-        return pd.NA
+    if pd.isna(text): return pd.NA
     text = str(text).upper()
     match = re.search(r"F[_\-]?0*(\d{1,2})", text)
     return int(match.group(1)) if match else pd.NA
 
 def extract_level(text):
-    if pd.isna(text):
-        return pd.NA
+    if pd.isna(text): return pd.NA
     text = str(text).upper()
     match = re.search(r"(\d{4})", text)
     return int(match.group(1)) if match else pd.NA
 
-# --- Clean only PA_01 and PA_02
 def clean_pala(val):
-    if pd.isna(val):
-        return pd.NA
+    if pd.isna(val): return pd.NA
     val = str(val).upper().strip()
-    if val == "PA_01":
-        return 1
-    elif val == "PA_02":
-        return 2
-    else:
-        return pd.NA  # delete others later
+    if val == "PA_01": return 1
+    if val == "PA_02": return 2
+    return pd.NA
 
 # ======================================================
 # MAIN PROCESS
 # ======================================================
 steps = []
 
-# 1️⃣ Split FECHA MEDICION
+# FECHA MEDICION → Day, Month, Year
 fechas = pd.to_datetime(df[col_fecha], errors="coerce", dayfirst=True)
-day = fechas.dt.day
-month = fechas.dt.month
-year = fechas.dt.year
-steps.append("✅ FECHA MEDICION split into Day / Month / Year")
-
-# 2️⃣ Extract Expansion + Level from ID TRONADURA
-expansion = df[col_id].apply(extract_expansion)
-level = df[col_id].apply(extract_level)
-steps.append("✅ Extracted Expansion and Level from ID TRONADURA")
-
-# 3️⃣ Build clean result
 result = pd.DataFrame({
-    "Day": day,
-    "Month": month,
-    "Year": year,
-    "Expansion": expansion,
-    "Level": level,
-    "PALA": df[col_pala],
+    "Day": fechas.dt.day,
+    "Month": fechas.dt.month,
+    "Year": fechas.dt.year,
+    "Expansion": df[col_id].apply(extract_expansion),
+    "Level": df[col_id].apply(extract_level),
+    "PALA": df[col_pala].apply(clean_pala),
     "P50 [\"]": df[col_p50],
     "P80 [\"]": df[col_p80],
-    "% PASANTE 2\"": df[col_pasante],
+    "% PASANTE 2\"": df[col_pasante]
 })
+steps.append("✅ Extracted Day/Month/Year, Expansion, Level, and cleaned PALA")
 
-# 4️⃣ Clean PALA (keep only PA_01 & PA_02)
+# Keep only PA_01 & PA_02
 before = len(result)
-result["PALA"] = result["PALA"].apply(clean_pala)
 result = result[result["PALA"].isin([1, 2])]
-after = len(result)
-steps.append(f"✅ Kept only PALA PA_01 and PA_02 (converted to 1 & 2) — removed {before - after} rows.")
+steps.append(f"✅ Removed rows without valid PALA (removed {before - len(result)})")
+
+# Convert `% PASANTE 2"` to percent (×100)
+result["% PASANTE 2\""] = pd.to_numeric(result["% PASANTE 2\""], errors="coerce") * 100
+
+# Convert Residual if exists
+if col_resi:
+    result["Residual [%]"] = pd.to_numeric(df[col_resi], errors="coerce") * 100
+    steps.append("🔁 Converted Residual values to percentage")
+else:
+    steps.append("ℹ️ Residual column not found — skipped")
 
 # ======================================================
 # DISPLAY RESULTS
 # ======================================================
 with st.expander("⚙️ Processing Summary", expanded=True):
     for s in steps:
-        st.markdown(
-            f"<div style='background:#e8f8f0;border-radius:8px;padding:10px;margin-bottom:6px;color:#137333;'>{s}</div>",
-            unsafe_allow_html=True,
-        )
+        st.success(s)
 
 st.subheader("✅ Final Clean Result (first 20 rows)")
 st.dataframe(result.head(20), use_container_width=True)
-st.success(f"✅ Final dataset: {len(result)} rows × {len(result.columns)} columns")
+st.success(f"Final dataset: {len(result)} rows × {len(result.columns)} columns")
 
 # ======================================================
 # DOWNLOAD
@@ -163,8 +151,8 @@ excel_buf = io.BytesIO()
 result.to_excel(excel_buf, index=False, engine="openpyxl")
 excel_buf.seek(0)
 
-csv_buf = io.StringIO()
-result.to_csv(csv_buf, index=False, sep=";")
+txt_buf = io.StringIO()
+result.to_csv(txt_buf, index=False, sep="\t")  # TXT tab-separated
 
 col1, col2 = st.columns(2)
 with col1:
@@ -177,11 +165,12 @@ with col1:
     )
 with col2:
     st.download_button(
-        "📗 Download CSV",
-        data=csv_buf.getvalue(),
-        file_name="DGM_Fragmentation_Output.csv",
-        mime="text/csv",
+        "📄 Download TXT",
+        data=txt_buf.getvalue(),
+        file_name="DGM_Fragmentation_Output.txt",
+        mime="text/plain",
         use_container_width=True,
     )
 
 st.caption("Built by Maxam — Omar El Kendi")
+
