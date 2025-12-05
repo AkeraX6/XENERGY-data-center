@@ -38,7 +38,7 @@ if not data_file or not ops_file:
 # HELPERS
 # ==========================================================
 def read_any_table(uploaded):
-    """Read Excel or CSV (detect ; or , for CSV)."""
+    """Read Excel or CSV (detect ; or ,)."""
     name = (uploaded.name or "").lower()
     if name.endswith(".csv"):
         try:
@@ -61,6 +61,7 @@ def nospace(s: str) -> str:
     return s.replace(" ", "")
 
 def find_col_by_hints(df, *hints):
+    """Find first column whose normalized name contains any of the hints."""
     for c in df.columns:
         n = strip_accents_lower_spaces(c)
         for h in hints:
@@ -89,19 +90,15 @@ ops_df = ops_df[[name_col, id_col]].dropna(subset=[name_col, id_col])
 ops_df[id_col] = pd.to_numeric(ops_df[id_col], errors="coerce").astype("Int64")
 ops_df = ops_df.dropna(subset=[id_col])
 
-# Build canonical index for operators
+# Build canonical index
 ops_index = []
 for _, row in ops_df.iterrows():
     full = str(row[name_col]).strip()
     code = int(row[id_col])
     ws = strip_accents_lower_spaces(full)
     ops_index.append({
-        "code": code,
-        "full_name": full,
-        "ws": ws,
-        "ns": nospace(ws),
-        "tokens": ws.split(),
-        "ntok": len(ws.split())
+        "code": code, "full_name": full, "ws": ws, "ns": nospace(ws),
+        "tokens": ws.split(), "ntok": len(ws.split())
     })
 
 max_existing_id = ops_df[id_col].max() if not ops_df.empty else 0
@@ -114,7 +111,6 @@ new_ops_dict = {}  # for displaying new operators
 # OPERATOR MATCHING
 # ==========================================================
 def best_operator_code_assign(raw_value: str):
-    """Fuzzy match operator names, assign existing codes or new sequential codes."""
     global next_code
     if pd.isna(raw_value) or str(raw_value).strip() == "":
         return 25, "empty→25"
@@ -123,7 +119,7 @@ def best_operator_code_assign(raw_value: str):
     s_ns = nospace(s_ws)
     s_tokens = set(s_ws.split())
 
-    # 1️⃣ Exact nospace match (accent-insensitive)
+    # 1️⃣ Exact nospace match
     for rec in ops_index:
         if s_ns == rec["ns"]:
             return rec["code"], "exact-nospace"
@@ -146,7 +142,7 @@ def best_operator_code_assign(raw_value: str):
     best = None
     for rec in ops_index:
         sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
-        if best is None or sim > best["sim"] if best else True:
+        if best is None or sim > best["sim"]:
             best = {"code": rec["code"], "sim": sim}
     if best and best["sim"] >= 0.90:
         return best["code"], f"fuzzy({best['sim']:.2f})"
@@ -163,12 +159,8 @@ def best_operator_code_assign(raw_value: str):
     updated_ops_records.loc[len(updated_ops_records)] = {name_col: clean_name, id_col: new_code}
 
     ops_index.append({
-        "code": new_code,
-        "full_name": clean_name,
-        "ws": s_ws,
-        "ns": s_ns,
-        "tokens": s_ws.split(),
-        "ntok": len(s_ws.split())
+        "code": new_code, "full_name": clean_name,
+        "ws": s_ws, "ns": s_ns, "tokens": s_ws.split(), "ntok": len(s_ws.split())
     })
     return new_code, "new-assign"
 
@@ -177,17 +169,21 @@ def best_operator_code_assign(raw_value: str):
 # ==========================================================
 def convert_turno(v):
     """
-    Turno logic:
-    - Empty or weird text → 1 (Día by default)
-    - Values similar to 'noche' (Nohce, Nhoce, etc.) → 2
+    Dia/Día -> 1
+    Noche (with typos like 'Nohce', 'Nhoce', 'Noche') -> 2
+    Empty or any other weird text -> 1 (default Dia)
     """
-    if pd.isna(v) or str(v).strip() == "":
+    if pd.isna(v):
         return 1
     val = strip_accents_lower_spaces(v)
-    # If it's close enough to "noche", treat as night
-    if SequenceMatcher(None, val, "noche").ratio() >= 0.6 or "noc" in val or "noch" in val or "nche" in val:
+    if not val:
+        return 1
+    # Detect Noche even with small typos
+    if "noc" in val or "nho" in val or "noh" in val or "nche" in val:
         return 2
-    # Everything else → treat as Día
+    if "dia" in val:
+        return 1
+    # Everything else -> default Dia
     return 1
 
 def extract_expansion_level(text):
@@ -223,7 +219,11 @@ def clean_perforadora(v):
     return v
 
 def cross_fill_pair(df_in, col1, col2):
-    """Cross-fill two numeric columns and drop rows where both remain empty/0."""
+    """
+    Cross-fill numeric pair:
+    - If one side <=0 or NaN, use the other.
+    - Then drop rows where both are NaN.
+    """
     df_local = df_in.copy()
     if not (col1 in df_local.columns and col2 in df_local.columns):
         return df_local, 0
@@ -237,9 +237,7 @@ def cross_fill_pair(df_in, col1, col2):
             b = a
         return a, b
 
-    df_local[col1], df_local[col2] = zip(
-        *df_local[[col1, col2]].apply(lambda r: fix(r[col1], r[col2]), axis=1)
-    )
+    df_local[col1], df_local[col2] = zip(*df_local[[col1, col2]].apply(lambda r: fix(r[col1], r[col2]), axis=1))
     before = len(df_local)
     df_local = df_local.dropna(subset=[col1, col2], how="all")
     removed = before - len(df_local)
@@ -248,19 +246,18 @@ def cross_fill_pair(df_in, col1, col2):
 # ==========================================================
 # CLEANING PIPELINE
 # ==========================================================
-# Remove duplicated column names at start (just in case)
+# Remove duplicated column names like .1, .2 ...
 df = df.loc[:, ~df.columns.duplicated()]
 df = df.loc[:, ~df.columns.str.contains(r"\.\d+$", regex=True)]
 df.columns = df.columns.astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip()
 
-# Normalize "Tiempo Perforación [hrs]" name if needed
+# Normalize Tiempo Perforación column name
 for c in df.columns:
     if "tiempo" in c.lower() and "perfor" in c.lower():
         df.rename(columns={c: "Tiempo Perforación [hrs]"}, inplace=True)
         break
 
-steps_done = []
-deletes_log = {}
+steps_done, deletes_log = [], {}
 total_deleted = 0
 
 # 1️⃣ Delete rows with empty Tiempo Perforación [hrs]
@@ -274,12 +271,12 @@ if "Tiempo Perforación [hrs]" in df.columns:
 else:
     steps_done.append("• Column 'Tiempo Perforación [hrs]' not found (no deletion).")
 
-# 2️⃣ Turno conversion (Día/Noche/misspellings)
+# 2️⃣ Turno conversion (Dia/Noche + defaults)
 if "Turno" in df.columns:
     df["Turno"] = df["Turno"].apply(convert_turno)
-    steps_done.append("• Converted Turno: Noche & typos → 2, everything else (incl. rare data/empty) → 1.")
+    steps_done.append("• Standardized Turno: Dia / Noche (typos fixed, weird/empty → 1).")
 
-# 3️⃣ Operator mapping (using uploaded mapping file)
+# 3️⃣ Operator mapping (using external mapping file)
 op_col = find_col_by_hints(df, "operador", "operator")
 new_ops_added_count = 0
 if op_col:
@@ -296,74 +293,101 @@ if op_col:
 else:
     steps_done.append("• Operator column not found — skipping operator mapping.")
 
-# 4️⃣ Banco → Expansion & Nivel (insert next to Banco) + delete invalid Banco rows
+# 4️⃣ Banco → Expansion & Nivel + delete invalid Banco rows
 if "Banco" in df.columns:
     exps, nivs = zip(*df["Banco"].apply(extract_expansion_level))
-    idx = df.columns.get_loc("Banco") + 1
-    df.insert(idx, "Expansion", exps)
-    df.insert(idx + 1, "Nivel", nivs)
-    steps_done.append("• Extracted Expansion and Nivel from Banco (added next to Banco).")
+    exps = pd.Series(exps, index=df.index)
+    nivs = pd.Series(nivs, index=df.index)
 
-    # Remove rows where Banco is empty or has no valid Expansion/Nivel (rare/incorrect like 'Malla', empty, etc.)
+    insert_idx = df.columns.get_loc("Banco") + 1
+    df.insert(insert_idx, "Expansion", exps)
+    df.insert(insert_idx + 1, "Nivel", nivs)
+
     before = len(df)
-    mask_valid_banco = df["Banco"].notna() & (df["Expansion"].notna() | df["Nivel"].notna())
-    df = df[mask_valid_banco]
+    mask_invalid_banco = df["Expansion"].isna() & df["Nivel"].isna()
+    df = df[~mask_invalid_banco].copy()
     removed = before - len(df)
     if removed > 0:
-        deletes_log["Invalid or empty 'Banco' (no Expansion/Nivel)"] = removed
+        deletes_log["Invalid Banco (no Expansion/Nivel)"] = removed
         total_deleted += removed
-        steps_done.append(f"• Removed {removed} rows with invalid/empty Banco (no Expansion/Nivel).")
+    steps_done.append("• Extracted Expansion & Nivel from Banco and removed rows with invalid Banco.")
 else:
-    steps_done.append("• Column 'Banco' not found — no Expansion/Nivel extraction or Banco filter.")
+    steps_done.append("• Column 'Banco' not found (no Expansion/Nivel extracted).")
 
 # 5️⃣ Perforadora mapping
 if "Perforadora" in df.columns:
     df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
-    steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numeric kept as-is).")
+    steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numbers kept as-is).")
 
-# 6️⃣ Elev Plan / Elev Real — refill from Nivel for empty/negative values
-if "Nivel" in df.columns:
-    for col in ["Elev Plan", "Elev Real"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            mask_bad = df[col].isna() | (df[col] < 0)
-            # fill bad values from Nivel
-            df.loc[mask_bad, col] = df.loc[mask_bad, "Nivel"]
-            steps_done.append(f"• Filled missing/negative values in '{col}' using 'Nivel'.")
-else:
-    steps_done.append("• 'Nivel' column not found — cannot refill Elev Plan/Real from Nivel.")
+# 6️⃣ Cross-fill Este/Norte/Elev/Profundidad pairs
+# ---- Detect pair columns robustly ----
+este_plan_col   = find_col_by_hints(df, "este plan")
+este_real_col   = find_col_by_hints(df, "este real")
+norte_plan_col  = find_col_by_hints(df, "norte plan")
+norte_real_col  = find_col_by_hints(df, "norte real")
+elev_plan_col   = find_col_by_hints(df, "elev plan", "elev. plan", "elevacion plan", "elev (design)")
+elev_real_col   = find_col_by_hints(df, "elev real", "elev.real", "elev. real", "elevacion real", "elev (actual)")
+prof_obj_col    = find_col_by_hints(df, "profundidad objetivo", "porfundidad objetivo", "prof objetivo")
+prof_real_col   = find_col_by_hints(df, "profundidad real")
 
-# 7️⃣ Cross-fill Este & Norte Plan/Real pairs
 removed_total_pairs = 0
 
-df, removed_here = cross_fill_pair(df, "Este Plan", "Este Real")
-removed_total_pairs += removed_here
+# Este
+if este_plan_col and este_real_col:
+    df, removed_here = cross_fill_pair(df, este_plan_col, este_real_col)
+    removed_total_pairs += removed_here
 
-df, removed_here = cross_fill_pair(df, "Norte Plan", "Norte Real")
-removed_total_pairs += removed_here
+# Norte
+if norte_plan_col and norte_real_col:
+    df, removed_here = cross_fill_pair(df, norte_plan_col, norte_real_col)
+    removed_total_pairs += removed_here
 
-# 8️⃣ Cross-fill Profundidad Objetivo / Profundidad Real and delete rows where both empty/0
-df, removed_here = cross_fill_pair(df, "Profundidad Objetivo", "Profundidad Real")
-removed_total_pairs += removed_here
+# Elevación: cross-fill + fallback to Nivel if both empty/<=0
+if elev_plan_col and elev_real_col:
+    df, removed_here = cross_fill_pair(df, elev_plan_col, elev_real_col)
+    removed_total_pairs += removed_here
+
+    if "Nivel" in df.columns:
+        df[elev_plan_col] = pd.to_numeric(df[elev_plan_col], errors="coerce")
+        df[elev_real_col] = pd.to_numeric(df[elev_real_col], errors="coerce")
+        mask_missing_elev = (
+            (df[elev_plan_col].isna() | (df[elev_plan_col] <= 0)) &
+            (df[elev_real_col].isna() | (df[elev_real_col] <= 0)) &
+            df["Nivel"].notna()
+        )
+        df.loc[mask_missing_elev, elev_plan_col] = df.loc[mask_missing_elev, "Nivel"]
+        df.loc[mask_missing_elev, elev_real_col] = df.loc[mask_missing_elev, "Nivel"]
+
+# Profundidad: cross-fill + delete both zero/empty
+if prof_obj_col and prof_real_col:
+    df, removed_here = cross_fill_pair(df, prof_obj_col, prof_real_col)
+    removed_total_pairs += removed_here
+
+    df[prof_obj_col] = pd.to_numeric(df[prof_obj_col], errors="coerce")
+    df[prof_real_col] = pd.to_numeric(df[prof_real_col], errors="coerce")
+
+    before_prof = len(df)
+    mask_both_zero_or_na = (
+        (df[prof_obj_col].isna() | (df[prof_obj_col] == 0)) &
+        (df[prof_real_col].isna() | (df[prof_real_col] == 0))
+    )
+    df = df[~mask_both_zero_or_na].copy()
+    removed_zero = before_prof - len(df)
+    if removed_zero > 0:
+        deletes_log["Profundidad Obj/Real both 0 or empty"] = deletes_log.get("Profundidad Obj/Real both 0 or empty", 0) + removed_zero
+        total_deleted += removed_zero
 
 if removed_total_pairs:
-    deletes_log["Both empty Plan/Real after cross-fill (Profundidad & others)"] = removed_total_pairs
+    deletes_log["Both empty Plan/Real after cross-fill"] = deletes_log.get("Both empty Plan/Real after cross-fill", 0) + removed_total_pairs
     total_deleted += removed_total_pairs
 
-steps_done.append(
-    "• Cross-filled Plan/Real pairs (Este, Norte). "
-    "For Profundidad: Objetivo/Real cross-filled and rows with both empty/0 were deleted."
-)
-
-# Final safety: remove any duplicate column names created during processing
-df = df.loc[:, ~df.columns.duplicated()]
+steps_done.append("• Cross-filled Plan/Real pairs: Este, Norte, Elev (with Nivel fallback), Profundidad (delete if both 0/empty).")
 
 # ==========================================================
 # PROCESSING SUMMARY
 # ==========================================================
 with st.expander("⚙️ Processing Summary", expanded=False):
 
-    # New operators first
     if new_ops_dict:
         st.markdown("### 👥 New Operators Added")
         for name, code in new_ops_dict.items():
@@ -445,7 +469,6 @@ with c2:
 if new_ops_added_count > 0:
     st.markdown("---")
     st.subheader("👥 Updated Operators Mapping")
-
     updated_ops = updated_ops_records.dropna(subset=[name_col, id_col])
     updated_ops[id_col] = updated_ops[id_col].astype(int)
     updated_ops["_norm"] = updated_ops[name_col].map(lambda x: nospace(strip_accents_lower_spaces(x)))
@@ -466,3 +489,5 @@ if new_ops_added_count > 0:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi -")
+
+
