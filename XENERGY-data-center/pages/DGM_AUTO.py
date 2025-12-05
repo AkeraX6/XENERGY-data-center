@@ -176,15 +176,19 @@ def best_operator_code_assign(raw_value: str):
 # OTHER HELPERS
 # ==========================================================
 def convert_turno(v):
-    """Map Día/Noche and refill empty Turno with 1."""
+    """
+    Turno logic:
+    - Empty or weird text → 1 (Día by default)
+    - Values similar to 'noche' (Nohce, Nhoce, etc.) → 2
+    """
     if pd.isna(v) or str(v).strip() == "":
         return 1
-    val = str(v).lower().strip()
-    if "dia" in val or "día" in val:
-        return 1
-    if "noche" in val:
+    val = strip_accents_lower_spaces(v)
+    # If it's close enough to "noche", treat as night
+    if SequenceMatcher(None, val, "noche").ratio() >= 0.6 or "noc" in val or "noch" in val or "nche" in val:
         return 2
-    return v
+    # Everything else → treat as Día
+    return 1
 
 def extract_expansion_level(text):
     if pd.isna(text):
@@ -241,49 +245,6 @@ def cross_fill_pair(df_in, col1, col2):
     removed = before - len(df_local)
     return df_local, removed
 
-def cross_fill_elev_with_nivel(df_in, col_plan, col_real, nivel_col):
-    """
-    Special rule for Elev Plan / Elev Real:
-    1) Cross-fill between Elev Plan & Elev Real (no row deletion here)
-    2) If both still empty/0 and Nivel exists → fill both from Nivel.
-    """
-    df_local = df_in.copy()
-    if not (col_plan in df_local.columns and col_real in df_local.columns):
-        return df_local, 0  # no deletions
-
-    def fix(a, b):
-        a = pd.to_numeric(a, errors="coerce")
-        b = pd.to_numeric(b, errors="coerce")
-        if pd.isna(a) or a <= 0:
-            a = b
-        if pd.isna(b) or b <= 0:
-            b = a
-        return a, b
-
-    # Step 1: cross-fill Elev Plan / Elev Real
-    df_local[col_plan], df_local[col_real] = zip(
-        *df_local[[col_plan, col_real]].apply(lambda r: fix(r[col_plan], r[col_real]), axis=1)
-    )
-
-    # Step 2: if both empty/0 → use Nivel if available
-    if nivel_col in df_local.columns:
-        df_local[nivel_col] = pd.to_numeric(df_local[nivel_col], errors="coerce")
-        # define "empty" as NaN or <= 0
-        elev_plan_num = pd.to_numeric(df_local[col_plan], errors="coerce")
-        elev_real_num = pd.to_numeric(df_local[col_real], errors="coerce")
-
-        mask_both_empty = (
-            (elev_plan_num.isna() | (elev_plan_num <= 0)) &
-            (elev_real_num.isna() | (elev_real_num <= 0))
-        )
-
-        df_local.loc[mask_both_empty, col_plan] = df_local.loc[mask_both_empty, nivel_col]
-        df_local.loc[mask_both_empty, col_real] = df_local.loc[mask_both_empty, nivel_col]
-
-    # We do NOT delete rows here; deletions for Plan/Real are only handled
-    # in cross_fill_pair for Profundidad (as requested).
-    return df_local, 0
-
 # ==========================================================
 # CLEANING PIPELINE
 # ==========================================================
@@ -313,10 +274,10 @@ if "Tiempo Perforación [hrs]" in df.columns:
 else:
     steps_done.append("• Column 'Tiempo Perforación [hrs]' not found (no deletion).")
 
-# 2️⃣ Turno conversion (including empty → 1)
+# 2️⃣ Turno conversion (Día/Noche/misspellings)
 if "Turno" in df.columns:
     df["Turno"] = df["Turno"].apply(convert_turno)
-    steps_done.append("• Converted Turno (Día→1, Noche→2, empty→1).")
+    steps_done.append("• Converted Turno: Noche & typos → 2, everything else (incl. rare data/empty) → 1.")
 
 # 3️⃣ Operator mapping (using uploaded mapping file)
 op_col = find_col_by_hints(df, "operador", "operator")
@@ -335,7 +296,7 @@ if op_col:
 else:
     steps_done.append("• Operator column not found — skipping operator mapping.")
 
-# 4️⃣ Banco → Expansion & Nivel (insert next to Banco)
+# 4️⃣ Banco → Expansion & Nivel (insert next to Banco) + delete invalid Banco rows
 if "Banco" in df.columns:
     exps, nivs = zip(*df["Banco"].apply(extract_expansion_level))
     idx = df.columns.get_loc("Banco") + 1
@@ -343,36 +304,56 @@ if "Banco" in df.columns:
     df.insert(idx + 1, "Nivel", nivs)
     steps_done.append("• Extracted Expansion and Nivel from Banco (added next to Banco).")
 
+    # Remove rows where Banco is empty or has no valid Expansion/Nivel (rare/incorrect like 'Malla', empty, etc.)
+    before = len(df)
+    mask_valid_banco = df["Banco"].notna() & (df["Expansion"].notna() | df["Nivel"].notna())
+    df = df[mask_valid_banco]
+    removed = before - len(df)
+    if removed > 0:
+        deletes_log["Invalid or empty 'Banco' (no Expansion/Nivel)"] = removed
+        total_deleted += removed
+        steps_done.append(f"• Removed {removed} rows with invalid/empty Banco (no Expansion/Nivel).")
+else:
+    steps_done.append("• Column 'Banco' not found — no Expansion/Nivel extraction or Banco filter.")
+
 # 5️⃣ Perforadora mapping
 if "Perforadora" in df.columns:
     df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
     steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numeric kept as-is).")
 
-# 6️⃣ Cross-fill Plan/Real pairs
+# 6️⃣ Elev Plan / Elev Real — refill from Nivel for empty/negative values
+if "Nivel" in df.columns:
+    for col in ["Elev Plan", "Elev Real"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            mask_bad = df[col].isna() | (df[col] < 0)
+            # fill bad values from Nivel
+            df.loc[mask_bad, col] = df.loc[mask_bad, "Nivel"]
+            steps_done.append(f"• Filled missing/negative values in '{col}' using 'Nivel'.")
+else:
+    steps_done.append("• 'Nivel' column not found — cannot refill Elev Plan/Real from Nivel.")
+
+# 7️⃣ Cross-fill Este & Norte Plan/Real pairs
 removed_total_pairs = 0
 
-# Este Plan / Este Real
 df, removed_here = cross_fill_pair(df, "Este Plan", "Este Real")
 removed_total_pairs += removed_here
 
-# Norte Plan / Norte Real
 df, removed_here = cross_fill_pair(df, "Norte Plan", "Norte Real")
 removed_total_pairs += removed_here
 
-# Elev Plan / Elev Real with Nivel support (no deletions here)
-df, removed_here = cross_fill_elev_with_nivel(df, "Elev Plan", "Elev Real", "Nivel")
-removed_total_pairs += removed_here  # will be 0, but we keep the pattern
-
-# Profundidad Objetivo / Profundidad Real – deletions if both empty
+# 8️⃣ Cross-fill Profundidad Objetivo / Profundidad Real and delete rows where both empty/0
 df, removed_here = cross_fill_pair(df, "Profundidad Objetivo", "Profundidad Real")
 removed_total_pairs += removed_here
 
 if removed_total_pairs:
-    deletes_log["Both empty Plan/Real after cross-fill (Profundidad + others)"] = removed_total_pairs
+    deletes_log["Both empty Plan/Real after cross-fill (Profundidad & others)"] = removed_total_pairs
     total_deleted += removed_total_pairs
 
-steps_done.append("• Cross-filled Plan/Real pairs (Este, Norte, Elev, Profundidad). "
-                  "Elev uses Nivel when both are empty; rows with both Profundidad columns empty were deleted.")
+steps_done.append(
+    "• Cross-filled Plan/Real pairs (Este, Norte). "
+    "For Profundidad: Objetivo/Real cross-filled and rows with both empty/0 were deleted."
+)
 
 # Final safety: remove any duplicate column names created during processing
 df = df.loc[:, ~df.columns.duplicated()]
@@ -485,10 +466,3 @@ if new_ops_added_count > 0:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi -")
-
-
-
-
-
-
-
