@@ -154,163 +154,171 @@ def fill_boreholes_by_blast(df):
     return df.groupby("Blast", group_keys=False).apply(_fill_group)
 
 
-# ==========================================================
-# FILE UPLOAD
-# ==========================================================
-uploaded_file = st.file_uploader("📤 Upload your file", type=["xlsx", "xls", "csv"])
-
-if uploaded_file is not None:
-    # --- READ FILE (Excel or CSV) with smart delimiter detection ---
-    file_name = uploaded_file.name.lower()
-    if file_name.endswith(".csv"):
-        df = read_csv_smart(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
-
-    st.subheader("📄 Original Data (Before Cleaning)")
-    st.dataframe(df.head(10), use_container_width=True)
-    st.info(f"📏 Total rows before cleaning: {len(df)}")
-
+def process_file(df):
+    """Apply all cleaning steps to a dataframe. Returns cleaned df and list of steps."""
     steps_done = []
 
-    # ==========================================================
-    # CLEANING STEPS
-    # ==========================================================
-    with st.expander("⚙️ See Processing Steps", expanded=False):
+    # STEP 1 – Clean invalid Density values
+    if "Density" in df.columns:
+        before = len(df)
+        df["Density_clean"] = pd.to_numeric(df["Density"], errors="coerce")
+        df = df[df["Density_clean"].notna() & (df["Density_clean"] > 0)]
+        deleted = before - len(df)
+        df.drop(columns=["Density_clean"], inplace=True)
+        steps_done.append(
+            f"✅ Cleaned Density: removed {deleted} invalid rows (letters, negatives, symbols, empty or 0)."
+        )
+    else:
+        steps_done.append("❌ Column 'Density' not found in the file.")
 
-        # STEP 1 – Clean invalid Density values (empty, letters, symbols, negatives, zero)
-        if "Density" in df.columns:
-            before = len(df)
-            df["Density_clean"] = pd.to_numeric(df["Density"], errors="coerce")
-            df = df[df["Density_clean"].notna() & (df["Density_clean"] > 0)]
-            deleted = before - len(df)
-            df.drop(columns=["Density_clean"], inplace=True)
+    # STEP 2 – Remove negative coordinates
+    if "Local X (Design)" in df.columns and "Local Y (Design)" in df.columns:
+        before = len(df)
+        df = df[(df["Local X (Design)"] >= 0) & (df["Local Y (Design)"] >= 0)]
+        deleted = before - len(df)
+        steps_done.append(f"✅ Removed {deleted} rows with negative local coordinates.")
+    else:
+        steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
+
+    # STEP 3 – Level & Expansion from Blast, Grid & Borehole from Borehole
+    if "Blast" in df.columns:
+        df["Level"] = df["Blast"].apply(extract_level_from_blast)
+        df["Expansion"] = df["Blast"].apply(extract_expansion_from_blast)
+
+        if "Borehole" in df.columns:
+            grids = []
+            bores = []
+            for v in df["Borehole"]:
+                grid, bore = parse_borehole_and_grid(v)
+                grids.append(grid)
+                bores.append(bore if bore is not None else None if v is not None else "")
+            df["Grid"] = grids
+            df["Borehole"] = bores
+
+            before_invalid = len(df)
+            df = df[df["Borehole"].notna()]
+            deleted_invalid = before_invalid - len(df)
+
+            df["Borehole"] = df["Borehole"].apply(lambda x: "" if x is None else x)
+            df = fill_boreholes_by_blast(df)
+
             steps_done.append(
-                f"✅ Cleaned Density: removed {deleted} invalid rows (letters, negatives, symbols, empty or 0)."
+                f"✅ Parsed Level & Expansion from Blast, Grid & Borehole from Borehole "
+                f"({deleted_invalid} invalid/aux/aX rows removed)."
             )
+
+            cols = list(df.columns)
+            for c in ["Level", "Expansion", "Grid", "Borehole"]:
+                if c in cols:
+                    cols.remove(c)
+            if "Blast" in cols:
+                idx = cols.index("Blast")
+                insert = ["Level", "Expansion", "Grid", "Borehole"]
+                cols[idx + 1:idx + 1] = [c for c in insert if c not in cols]
+                df = df[cols]
         else:
-            steps_done.append("❌ Column 'Density' not found in the file.")
+            steps_done.append("⚠️ Column 'Borehole' not found. Only Level/Expansion from Blast were created.")
+    else:
+        steps_done.append("❌ Column 'Blast' not found in file. Level/Expansion/Grid were not created.")
 
-        # STEP 2 – Remove negative coordinates (Local X/Y Design)
-        if "Local X (Design)" in df.columns and "Local Y (Design)" in df.columns:
-            before = len(df)
-            df = df[(df["Local X (Design)"] >= 0) & (df["Local Y (Design)"] >= 0)]
-            deleted = before - len(df)
-            steps_done.append(f"✅ Removed {deleted} rows with negative local coordinates.")
+    # STEP 4 – Hole Length cross-fill
+    if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
+        before = len(df)
+        df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
+        df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
+        df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all", inplace=True)
+        deleted = before - len(df)
+        steps_done.append(f"✅ Cross-filled Hole Length data (removed {deleted} rows with both lengths empty).")
+    else:
+        steps_done.append("⚠️ Hole Length columns not found.")
+
+    # STEP 5 – Explosive cross-fill
+    if "Explosive (kg) (Design)" in df.columns and "Explosive (kg) (Actual)" in df.columns:
+        before = len(df)
+        df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
+        df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
+        df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all", inplace=True)
+        deleted = before - len(df)
+        steps_done.append(f"✅ Cross-filled Explosive data (removed {deleted} rows with both values empty).")
+    else:
+        steps_done.append("⚠️ Explosive columns not found.")
+
+    # STEP 6 – Clean Asset column
+    asset_col = next((c for c in df.columns if "Asset" in c), None)
+    if asset_col:
+        before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
+        df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
+        steps_done.append(
+            f"✅ Cleaned '{asset_col}' column (removed letters; {before_non_numeric} entries contained text)."
+        )
+    else:
+        steps_done.append("⚠️ 'Asset' column not found.")
+
+    return df, steps_done
+
+
+# ==========================================================
+# FILE UPLOAD (MULTIPLE FILES)
+# ==========================================================
+uploaded_files = st.file_uploader("📤 Upload your files", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
+
+if uploaded_files:
+    all_dfs = []
+    all_steps = {}
+
+    # Process each file
+    for uploaded_file in uploaded_files:
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith(".csv"):
+            df = read_csv_smart(uploaded_file)
         else:
-            steps_done.append("❌ Missing columns 'Local X (Design)' or 'Local Y (Design)'.")
+            df = pd.read_excel(uploaded_file)
 
-        # STEP 3 – Level & Expansion from Blast, Grid & Borehole from Borehole
-        if "Blast" in df.columns:
-            # Level & Expansion from Blast
-            df["Level"] = df["Blast"].apply(extract_level_from_blast)
-            df["Expansion"] = df["Blast"].apply(extract_expansion_from_blast)
+        st.subheader(f"📄 {uploaded_file.name} (Before Cleaning)")
+        st.dataframe(df.head(10), use_container_width=True)
+        st.info(f"📏 Total rows: {len(df)}")
 
-            # Grid & Borehole from Borehole (if column exists)
-            if "Borehole" in df.columns:
-                grids = []
-                bores = []
-                for v in df["Borehole"]:
-                    grid, bore = parse_borehole_and_grid(v)
-                    grids.append(grid)
-                    bores.append(bore if bore is not None else None if v is not None else "")
-                df["Grid"] = grids
-                df["Borehole"] = bores
+        # Process file
+        df_cleaned, steps = process_file(df)
+        all_dfs.append(df_cleaned)
+        all_steps[uploaded_file.name] = steps
 
-                # Drop rows where Borehole is None (Aux or invalid like a1, a2, a...)
-                before_invalid = len(df)
-                df = df[df["Borehole"].notna()]  # keep numeric or "" (to fill)
-                deleted_invalid = before_invalid - len(df)
-
-                # Fill Borehole "" per Blast with counters
-                df["Borehole"] = df["Borehole"].apply(lambda x: "" if x is None else x)
-                df = fill_boreholes_by_blast(df)
-
-                steps_done.append(
-                    f"✅ Parsed Level & Expansion from Blast, Grid & Borehole from Borehole "
-                    f"({deleted_invalid} invalid/aux/aX rows removed)."
+        # Show cleaning steps
+        with st.expander(f"⚙️ Processing Steps for {uploaded_file.name}", expanded=False):
+            for step in steps:
+                st.markdown(
+                    f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
+                    f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
+                    unsafe_allow_html=True
                 )
 
-                # Reorder: Blast → Level → Expansion → Grid → Borehole → rest
-                cols = list(df.columns)
-                for c in ["Level", "Expansion", "Grid", "Borehole"]:
-                    if c in cols:
-                        cols.remove(c)
-                if "Blast" in cols:
-                    idx = cols.index("Blast")
-                    insert = ["Level", "Expansion", "Grid", "Borehole"]
-                    cols[idx + 1:idx + 1] = [c for c in insert if c not in cols]
-                    df = df[cols]
-            else:
-                steps_done.append("⚠️ Column 'Borehole' not found. Only Level/Expansion from Blast were created.")
-        else:
-            steps_done.append("❌ Column 'Blast' not found in file. Level/Expansion/Grid were not created.")
-
-        # STEP 4 – Hole Length cross-fill
-        if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
-            before = len(df)
-            df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
-            df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
-            df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all", inplace=True)
-            deleted = before - len(df)
-            steps_done.append(f"✅ Cross-filled Hole Length data (removed {deleted} rows with both lengths empty).")
-        else:
-            steps_done.append("⚠️ Hole Length columns not found.")
-
-        # STEP 5 – Explosive cross-fill
-        if "Explosive (kg) (Design)" in df.columns and "Explosive (kg) (Actual)" in df.columns:
-            before = len(df)
-            df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
-            df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
-            df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all", inplace=True)
-            deleted = before - len(df)
-            steps_done.append(f"✅ Cross-filled Explosive data (removed {deleted} rows with both values empty).")
-        else:
-            steps_done.append("⚠️ Explosive columns not found.")
-
-        # STEP 6 – Clean Asset column (keep only numeric part)
-        asset_col = next((c for c in df.columns if "Asset" in c), None)
-        if asset_col:
-            before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
-            df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
-            steps_done.append(
-                f"✅ Cleaned '{asset_col}' column (removed letters; {before_non_numeric} entries contained text)."
-            )
-        else:
-            steps_done.append("⚠️ 'Asset' column not found.")
-
-        # --- Display Steps in Green Cards ---
-        for step in steps_done:
-            st.markdown(
-                f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
-                unsafe_allow_html=True
-            )
+    # Merge all dataframes
+    merged_df = pd.concat(all_dfs, ignore_index=True)
 
     # ==========================================================
-    # AFTER CLEANING — RESULTS
+    # MERGED RESULTS
     # ==========================================================
     st.markdown("---")
-    st.subheader("✅ Data After Cleaning & Transformation")
-    st.dataframe(df.head(20), use_container_width=True)
-    st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
+    st.subheader("✅ Merged Data (All Files Combined)")
+    st.dataframe(merged_df.head(20), use_container_width=True)
+    st.success(f"✅ Merged dataset: {len(merged_df)} rows × {len(merged_df.columns)} columns from {len(uploaded_files)} file(s).")
 
     # ==========================================================
     # DOWNLOAD SECTION
     # ==========================================================
     st.markdown("---")
-    st.subheader("💾 Export Cleaned File")
+    st.subheader("💾 Export Cleaned Files")
 
     option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
     if option == "⬇️ Download All Columns":
-        export_df = df
+        export_df = merged_df
     else:
         selected_columns = st.multiselect(
             "Select columns (drag to reorder):",
-            options=list(df.columns),
-            default=list(df.columns)
+            options=list(merged_df.columns),
+            default=list(merged_df.columns)
         )
-        export_df = df[selected_columns] if selected_columns else df
+        export_df = merged_df[selected_columns] if selected_columns else merged_df
 
     # Prepare Excel + CSV
     excel_buffer = io.BytesIO()
@@ -325,7 +333,7 @@ if uploaded_file is not None:
         st.download_button(
             "📘 Download Excel File",
             excel_buffer,
-            file_name="Escondida_QAQC_Cleaned.xlsx",
+            file_name="Escondida_QAQC_Cleaned_Merged.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -333,7 +341,7 @@ if uploaded_file is not None:
         st.download_button(
             "📗 Download CSV File",
             csv_buffer.getvalue(),
-            file_name="Escondida_QAQC_Cleaned.csv",
+            file_name="Escondida_QAQC_Cleaned_Merged.csv",
             mime="text/csv",
             use_container_width=True
         )
@@ -342,4 +350,5 @@ if uploaded_file is not None:
     st.caption("Built by Maxam - Omar El Kendi -")
 
 else:
-    st.info("📂 Please upload an Excel or CSV file to begin.")
+    st.info("📂 Please upload Excel or CSV files to begin.")
+
