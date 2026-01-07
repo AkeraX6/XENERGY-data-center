@@ -78,6 +78,7 @@ def dashboard_page():
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position", "Mill"]
     )
 
+    # Hemos quitado use_container_width=True porque da error en versiones antiguas de Streamlit
     proceed_button = st.button("🚀 Proceed", width=True)
 
     if proceed_button:
