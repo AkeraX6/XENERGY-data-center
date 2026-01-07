@@ -78,7 +78,7 @@ def dashboard_page():
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position", "Mill"]
     )
 
-    proceed_button = st.button("🚀 Proceed", use_container_width=True)
+    proceed_button = st.button("🚀 Proceed", width=True)
 
     if proceed_button:
         if mine == "Select..." or file_type == "Select...":
@@ -136,6 +136,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
