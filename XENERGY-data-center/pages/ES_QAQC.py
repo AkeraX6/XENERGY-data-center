@@ -25,30 +25,64 @@ if st.button("⬅️ Back to Menu", key="back_esqaqc"):
 # HELPER FUNCTIONS
 # ==========================================================
 def read_csv_smart(file_obj):
-    """Detect delimiter automatically for CSVs."""
-    sample = file_obj.read(8192).decode(errors="replace")
+    """Detect delimiter and encoding for CSVs more robustly."""
+    import csv
+
+    sample_bytes = file_obj.read(8192)
     file_obj.seek(0)
-    try:
-        # auto-detect separator
-        return pd.read_csv(file_obj, sep=None, engine="python")
-    except Exception:
-        # fallback heuristics
-        if sample.count(";") > sample.count(","):
+
+    encodings_to_try = ("utf-8", "cp1252", "latin1", "iso-8859-1")
+    delimiters = [",", ";", "\t", "|"]
+
+    for enc in encodings_to_try:
+        try:
+            text = sample_bytes.decode(enc, errors="replace")
+        except Exception:
+            continue
+
+        sep = None
+        try:
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(text, delimiters="".join(delimiters))
+            sep = dialect.delimiter
+        except Exception:
+            if text.count(";") > text.count(","):
+                sep = ";"
+            elif "\t" in text:
+                sep = "\t"
+            elif "|" in text:
+                sep = "|"
+            else:
+                sep = ","
+
+        try:
             file_obj.seek(0)
-            return pd.read_csv(file_obj, sep=";")
-        elif sample.count("\t") > 0:
+            return pd.read_csv(file_obj, sep=sep, engine="python", encoding=enc)
+        except Exception:
             file_obj.seek(0)
-            return pd.read_csv(file_obj, sep="\t")
-        elif sample.count("|") > 0:
-            file_obj.seek(0)
-            return pd.read_csv(file_obj, sep="|")
-        else:
-            file_obj.seek(0)
-            return pd.read_csv(file_obj)
+            continue
+
+    file_obj.seek(0)
+    return pd.read_csv(file_obj, sep=None, engine="python", encoding="latin1")
+
+
+def _replace_dash_with_na(series: pd.Series) -> pd.Series:
+    """Treat '-' (and common variants) as missing."""
+    if series is None:
+        return series
+    s = series.copy()
+    # normalize to string then replace, but keep real NaNs
+    s = s.replace(["-", " -", "- ", "—", "–"], pd.NA)
+    return s
+
+
+def _to_numeric(series: pd.Series) -> pd.Series:
+    """Dash → NA then numeric."""
+    return pd.to_numeric(_replace_dash_with_na(series), errors="coerce")
 
 
 def extract_level_from_blast(text):
-    """Level = first 4-digit block in Blast (e.g. 2905_PL1S_5001 → 2905)."""
+    """Level = first 4-digit block in Blast (e.g. 2620_E07_5001 Ene 02 → 2620)."""
     if pd.isna(text):
         return None
     m = re.search(r"(\d{4})", str(text))
@@ -57,16 +91,17 @@ def extract_level_from_blast(text):
 
 def extract_expansion_from_blast(text):
     """
-    Expansion from Blast:
-      - 3040_N17B_6008 → 17
-      - 2545_PL1_5001 → 1
-      - 2995_S04_6001 → 4
-      - 3010_L05_6018 → 5
+    Expansion from Blast examples:
+      - 3040_N17B_6008_... → 17
+      - 2545_PL1_5001 ...  → 1
+      - 2995_S04_6001 ...  → 4
+      - 3010_L05_6018 ...  → 5
+      - 2620_E07_5001 ...  → 7   ✅ NEW
     """
     if pd.isna(text):
         return None
     txt = str(text).upper()
-    m = re.search(r"(?:N|PL|L|S)(\d{1,2})", txt)
+    m = re.search(r"(?:N|PL|L|S|E)(\d{1,2})", txt)  # ✅ added E
     if not m:
         return None
     return int(m.group(1))
@@ -83,8 +118,8 @@ def parse_borehole_and_grid(raw_val):
           5001_255  → 255
           B 125     → 100000125
           b002      → 1000002
-      - Rows with Aux* or forms like a1 / a2 / a are marked invalid (return None for borehole).
-      - Empty borehole returns ("", grid) → will be filled later by counter.
+      - Rows with Aux* or forms like a1 / a2 / a are invalid (return None for borehole).
+      - Empty borehole returns ("", grid) → filled later by counter.
     """
     if pd.isna(raw_val):
         return None, ""
@@ -93,16 +128,13 @@ def parse_borehole_and_grid(raw_val):
     if s == "":
         return None, ""  # will be filled later
 
-    # remove spaces globally
     s = re.sub(r"\s+", "", s)
 
-    # split by underscore: LEVEL_SUFFIX (e.g. 5001_B267, 5001_255)
     if "_" in s:
         left, right = s.split("_", 1)
         grid = int(left) if left.isdigit() else None
         suffix = right
     else:
-        # no underscore: might be just hole ID, grid unknown
         grid = None
         suffix = s
 
@@ -112,7 +144,7 @@ def parse_borehole_and_grid(raw_val):
     if suffix_low.startswith("aux"):
         return grid, None
 
-    # if exactly pattern letter+digits
+    # letter+digits
     m = re.match(r"^([a-z])(\d+)$", suffix_low)
     if m:
         letter, num = m.groups()
@@ -123,22 +155,17 @@ def parse_borehole_and_grid(raw_val):
         elif letter == "d":
             return grid, int(num)
         else:
-            # examples: a1, e5 → invalid
-            return grid, None
+            return grid, None  # a1, e5, etc.
 
-    # if only digits → normal numeric borehole
+    # digits only
     if suffix_low.isdigit():
         return grid, int(suffix_low)
 
-    # any other strange combination → invalid
     return grid, None
 
 
 def fill_boreholes_by_blast(df):
-    """
-    For each Blast, fill empty Borehole ('') with sequential IDs starting at 10000.
-    Rows with Borehole = None (invalid/aux/a1 etc.) should already be dropped before.
-    """
+    """Fill empty Borehole ('') within each Blast with sequential IDs starting at 10000."""
     def _fill_group(group):
         counter = 10000
         new_vals = []
@@ -152,6 +179,27 @@ def fill_boreholes_by_blast(df):
         return group
 
     return df.groupby("Blast", group_keys=False).apply(_fill_group)
+
+
+def cross_fill_pair(df, col_a, col_b, steps_done, label):
+    """
+    Cross-fill col_a <-> col_b treating empty AND '-' as missing.
+    Does NOT drop rows here; drop is done separately where needed.
+    """
+    if col_a not in df.columns or col_b not in df.columns:
+        steps_done.append(f"⚠️ {label}: columns not found ({col_a}, {col_b}).")
+        return df
+
+    # treat '-' as NA
+    df[col_a] = _replace_dash_with_na(df[col_a])
+    df[col_b] = _replace_dash_with_na(df[col_b])
+
+    # cross fill
+    df[col_a] = df[col_a].fillna(df[col_b])
+    df[col_b] = df[col_b].fillna(df[col_a])
+
+    steps_done.append(f"✅ Cross-filled {label} (empty OR '-' treated as missing).")
+    return df
 
 
 def process_file(df):
@@ -171,9 +219,11 @@ def process_file(df):
     else:
         steps_done.append("❌ Column 'Density' not found in the file.")
 
-    # STEP 2 – Remove negative coordinates
+    # STEP 2 – Remove negative coordinates (Local Design)
     if "Local X (Design)" in df.columns and "Local Y (Design)" in df.columns:
         before = len(df)
+        df["Local X (Design)"] = _to_numeric(df["Local X (Design)"])
+        df["Local Y (Design)"] = _to_numeric(df["Local Y (Design)"])
         df = df[(df["Local X (Design)"] >= 0) & (df["Local Y (Design)"] >= 0)]
         deleted = before - len(df)
         steps_done.append(f"✅ Removed {deleted} rows with negative local coordinates.")
@@ -203,47 +253,70 @@ def process_file(df):
             df = fill_boreholes_by_blast(df)
 
             steps_done.append(
-                f"✅ Parsed Level & Expansion from Blast, Grid & Borehole from Borehole "
+                f"✅ Parsed Level & Expansion from Blast (supports N/PL/L/S/E), Grid & Borehole from Borehole "
                 f"({deleted_invalid} invalid/aux/aX rows removed)."
             )
 
+            # reorder columns: Blast → Level → Expansion → Grid → Borehole → rest
             cols = list(df.columns)
             for c in ["Level", "Expansion", "Grid", "Borehole"]:
                 if c in cols:
                     cols.remove(c)
             if "Blast" in cols:
                 idx = cols.index("Blast")
-                insert = ["Level", "Expansion", "Grid", "Borehole"]
-                cols[idx + 1:idx + 1] = [c for c in insert if c not in cols]
+                cols[idx + 1:idx + 1] = ["Level", "Expansion", "Grid", "Borehole"]
                 df = df[cols]
         else:
             steps_done.append("⚠️ Column 'Borehole' not found. Only Level/Expansion from Blast were created.")
     else:
         steps_done.append("❌ Column 'Blast' not found in file. Level/Expansion/Grid were not created.")
 
-    # STEP 4 – Hole Length cross-fill
+    # STEP 4 – Hole Length cross-fill (empty OR '-')
     if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
         before = len(df)
-        df["Hole Length (Design)"] = df["Hole Length (Design)"].fillna(df["Hole Length (Actual)"])
-        df["Hole Length (Actual)"] = df["Hole Length (Actual)"].fillna(df["Hole Length (Design)"])
+        df = cross_fill_pair(df, "Hole Length (Design)", "Hole Length (Actual)", steps_done, "Hole Length")
+        # drop if still both missing
         df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all", inplace=True)
         deleted = before - len(df)
-        steps_done.append(f"✅ Cross-filled Hole Length data (removed {deleted} rows with both lengths empty).")
+        steps_done.append(f"🗑️ Hole Length: removed {deleted} rows where BOTH Design & Actual remained empty/'-'.")
     else:
         steps_done.append("⚠️ Hole Length columns not found.")
 
-    # STEP 5 – Explosive cross-fill
+    # STEP 5 – Explosive cross-fill (empty OR '-')
     if "Explosive (kg) (Design)" in df.columns and "Explosive (kg) (Actual)" in df.columns:
         before = len(df)
-        df["Explosive (kg) (Design)"] = df["Explosive (kg) (Design)"].fillna(df["Explosive (kg) (Actual)"])
-        df["Explosive (kg) (Actual)"] = df["Explosive (kg) (Actual)"].fillna(df["Explosive (kg) (Design)"])
+        df = cross_fill_pair(df, "Explosive (kg) (Design)", "Explosive (kg) (Actual)", steps_done, "Explosive (kg)")
         df.dropna(subset=["Explosive (kg) (Design)", "Explosive (kg) (Actual)"], how="all", inplace=True)
         deleted = before - len(df)
-        steps_done.append(f"✅ Cross-filled Explosive data (removed {deleted} rows with both values empty).")
+        steps_done.append(f"🗑️ Explosive: removed {deleted} rows where BOTH Design & Actual remained empty/'-'.")
     else:
         steps_done.append("⚠️ Explosive columns not found.")
 
-    # STEP 6 – Clean Asset column
+    # STEP 6 – Stemming cross-fill (empty OR '-')  ✅ NEW
+    if "Stemming (Design)" in df.columns and "Stemming (Actual)" in df.columns:
+        before = len(df)
+        df = cross_fill_pair(df, "Stemming (Design)", "Stemming (Actual)", steps_done, "Stemming")
+        df.dropna(subset=["Stemming (Design)", "Stemming (Actual)"], how="all", inplace=True)
+        deleted = before - len(df)
+        steps_done.append(f"🗑️ Stemming: removed {deleted} rows where BOTH Design & Actual remained empty/'-'.")
+    else:
+        steps_done.append("⚠️ Stemming columns not found (skipped).")
+
+    # STEP 7 – WaterLevel: convert '-' to 0  ✅ NEW
+    # (If you have multiple variants of the name, add them here)
+    if "WaterLevel" in df.columns:
+        before_dash = (_replace_dash_with_na(df["WaterLevel"]).isna() & df["WaterLevel"].astype(str).str.strip().isin(["-","—","–"])).sum()
+        df["WaterLevel"] = _replace_dash_with_na(df["WaterLevel"])
+        df["WaterLevel"] = _to_numeric(df["WaterLevel"]).fillna(0)
+        steps_done.append("✅ WaterLevel: converted '-' (and non-numeric) to 0.")
+    elif "Water Level" in df.columns:
+        df["Water Level"] = _replace_dash_with_na(df["Water Level"])
+        df["Water Level"] = _to_numeric(df["Water Level"]).fillna(0)
+        steps_done.append("✅ Water Level: converted '-' (and non-numeric) to 0.")
+    else:
+        steps_done.append("ℹ️ WaterLevel column not found (skipped).")
+
+    # STEP 8 – Clean Asset column
     asset_col = next((c for c in df.columns if "Asset" in c), None)
     if asset_col:
         before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
@@ -260,7 +333,11 @@ def process_file(df):
 # ==========================================================
 # FILE UPLOAD (MULTIPLE FILES)
 # ==========================================================
-uploaded_files = st.file_uploader("📤 Upload your files", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "📤 Upload your files",
+    type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     all_dfs = []
@@ -269,6 +346,7 @@ if uploaded_files:
     # Process each file
     for uploaded_file in uploaded_files:
         file_name = uploaded_file.name.lower()
+
         if file_name.endswith(".csv"):
             df = read_csv_smart(uploaded_file)
         else:
@@ -278,12 +356,10 @@ if uploaded_files:
         st.dataframe(df.head(10), use_container_width=True)
         st.info(f"📏 Total rows: {len(df)}")
 
-        # Process file
         df_cleaned, steps = process_file(df)
         all_dfs.append(df_cleaned)
         all_steps[uploaded_file.name] = steps
 
-        # Show cleaning steps
         with st.expander(f"⚙️ Processing Steps for {uploaded_file.name}", expanded=False):
             for step in steps:
                 st.markdown(
@@ -292,7 +368,6 @@ if uploaded_files:
                     unsafe_allow_html=True
                 )
 
-    # Merge all dataframes
     merged_df = pd.concat(all_dfs, ignore_index=True)
 
     # ==========================================================
@@ -301,7 +376,9 @@ if uploaded_files:
     st.markdown("---")
     st.subheader("✅ Merged Data (All Files Combined)")
     st.dataframe(merged_df.head(20), use_container_width=True)
-    st.success(f"✅ Merged dataset: {len(merged_df)} rows × {len(merged_df.columns)} columns from {len(uploaded_files)} file(s).")
+    st.success(
+        f"✅ Merged dataset: {len(merged_df)} rows × {len(merged_df.columns)} columns from {len(uploaded_files)} file(s)."
+    )
 
     # ==========================================================
     # DOWNLOAD SECTION
@@ -320,7 +397,6 @@ if uploaded_files:
         )
         export_df = merged_df[selected_columns] if selected_columns else merged_df
 
-    # Prepare Excel + CSV
     excel_buffer = io.BytesIO()
     export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
@@ -351,4 +427,6 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel or CSV files to begin.")
+
+
 
