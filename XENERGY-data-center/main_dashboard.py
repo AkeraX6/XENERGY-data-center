@@ -79,7 +79,7 @@ def dashboard_page():
     )
 
     # Hemos quitado use_container_width=True porque da error en versiones antiguas de Streamlit
-    proceed_button = st.button("🚀 Proceed", width=True)
+    proceed_button = st.button("🚀 Proceed",  use_container_width=True)
 
     if proceed_button:
         if mine == "Select..." or file_type == "Select...":
@@ -137,6 +137,7 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
 
 
 
