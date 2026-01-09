@@ -70,7 +70,7 @@ def _replace_dash_with_na(series: pd.Series) -> pd.Series:
     """Treat '-' (and common variants) as missing."""
     if series is None:
         return series
-    return series.replace(["-", " -", "- ", "—", "–", ""],s"\xa0"], pd.NA)
+    return series.replace(["-", " -", "- ", "—", "–", "", "\xa0"], pd.NA)
 
 
 def _to_numeric(series: pd.Series) -> pd.Series:
@@ -416,8 +416,3 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel or CSV files to begin.")
-
-
-
-
-
