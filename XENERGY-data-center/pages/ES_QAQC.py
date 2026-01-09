@@ -70,15 +70,24 @@ def _replace_dash_with_na(series: pd.Series) -> pd.Series:
     """Treat '-' (and common variants) as missing."""
     if series is None:
         return series
-    s = series.copy()
-    # normalize to string then replace, but keep real NaNs
-    s = s.replace(["-", " -", "- ", "—", "–"], pd.NA)
-    return s
+    return series.replace(["-", " -", "- ", "—", "–", ""],s"\xa0"], pd.NA)
 
 
 def _to_numeric(series: pd.Series) -> pd.Series:
     """Dash → NA then numeric."""
     return pd.to_numeric(_replace_dash_with_na(series), errors="coerce")
+
+
+def find_water_level_column(df: pd.DataFrame):
+    """
+    Find water level column even if it is called:
+    'Water lev', 'Water level', 'WaterLevel', 'WATER LEV', etc.
+    """
+    for c in df.columns:
+        key = re.sub(r"\s+", "", str(c).strip().lower())
+        if ("water" in key) and ("lev" in key):
+            return c
+    return None
 
 
 def extract_level_from_blast(text):
@@ -96,12 +105,12 @@ def extract_expansion_from_blast(text):
       - 2545_PL1_5001 ...  → 1
       - 2995_S04_6001 ...  → 4
       - 3010_L05_6018 ...  → 5
-      - 2620_E07_5001 ...  → 7   ✅ NEW
+      - 2620_E07_5001 ...  → 7
     """
     if pd.isna(text):
         return None
     txt = str(text).upper()
-    m = re.search(r"(?:N|PL|L|S|E)(\d{1,2})", txt)  # ✅ added E
+    m = re.search(r"(?:N|PL|L|S|E)(\d{1,2})", txt)
     if not m:
         return None
     return int(m.group(1))
@@ -140,11 +149,9 @@ def parse_borehole_and_grid(raw_val):
 
     suffix_low = suffix.lower()
 
-    # Aux → invalid
     if suffix_low.startswith("aux"):
         return grid, None
 
-    # letter+digits
     m = re.match(r"^([a-z])(\d+)$", suffix_low)
     if m:
         letter, num = m.groups()
@@ -155,9 +162,8 @@ def parse_borehole_and_grid(raw_val):
         elif letter == "d":
             return grid, int(num)
         else:
-            return grid, None  # a1, e5, etc.
+            return grid, None
 
-    # digits only
     if suffix_low.isdigit():
         return grid, int(suffix_low)
 
@@ -182,19 +188,14 @@ def fill_boreholes_by_blast(df):
 
 
 def cross_fill_pair(df, col_a, col_b, steps_done, label):
-    """
-    Cross-fill col_a <-> col_b treating empty AND '-' as missing.
-    Does NOT drop rows here; drop is done separately where needed.
-    """
+    """Cross-fill col_a <-> col_b treating empty AND '-' as missing."""
     if col_a not in df.columns or col_b not in df.columns:
         steps_done.append(f"⚠️ {label}: columns not found ({col_a}, {col_b}).")
         return df
 
-    # treat '-' as NA
     df[col_a] = _replace_dash_with_na(df[col_a])
     df[col_b] = _replace_dash_with_na(df[col_b])
 
-    # cross fill
     df[col_a] = df[col_a].fillna(df[col_b])
     df[col_b] = df[col_b].fillna(df[col_a])
 
@@ -257,7 +258,6 @@ def process_file(df):
                 f"({deleted_invalid} invalid/aux/aX rows removed)."
             )
 
-            # reorder columns: Blast → Level → Expansion → Grid → Borehole → rest
             cols = list(df.columns)
             for c in ["Level", "Expansion", "Grid", "Borehole"]:
                 if c in cols:
@@ -275,7 +275,6 @@ def process_file(df):
     if "Hole Length (Design)" in df.columns and "Hole Length (Actual)" in df.columns:
         before = len(df)
         df = cross_fill_pair(df, "Hole Length (Design)", "Hole Length (Actual)", steps_done, "Hole Length")
-        # drop if still both missing
         df.dropna(subset=["Hole Length (Design)", "Hole Length (Actual)"], how="all", inplace=True)
         deleted = before - len(df)
         steps_done.append(f"🗑️ Hole Length: removed {deleted} rows where BOTH Design & Actual remained empty/'-'.")
@@ -302,19 +301,16 @@ def process_file(df):
     else:
         steps_done.append("⚠️ Stemming columns not found (skipped).")
 
-    # STEP 7 – WaterLevel: convert '-' to 0  ✅ NEW
-    # (If you have multiple variants of the name, add them here)
-    if "WaterLevel" in df.columns:
-        before_dash = (_replace_dash_with_na(df["WaterLevel"]).isna() & df["WaterLevel"].astype(str).str.strip().isin(["-","—","–"])).sum()
-        df["WaterLevel"] = _replace_dash_with_na(df["WaterLevel"])
-        df["WaterLevel"] = _to_numeric(df["WaterLevel"]).fillna(0)
-        steps_done.append("✅ WaterLevel: converted '-' (and non-numeric) to 0.")
-    elif "Water Level" in df.columns:
-        df["Water Level"] = _replace_dash_with_na(df["Water Level"])
-        df["Water Level"] = _to_numeric(df["Water Level"]).fillna(0)
-        steps_done.append("✅ Water Level: converted '-' (and non-numeric) to 0.")
+    # STEP 7 – Water Level: convert '-' to 0 (supports 'Water lev', etc.) ✅ FIXED
+    water_col = find_water_level_column(df)
+    if water_col:
+        before = len(df)
+        df[water_col] = df[water_col].astype(str).str.strip()
+        df[water_col] = df[water_col].replace(["-", "—", "–", ""], "0")
+        df[water_col] = pd.to_numeric(df[water_col], errors="coerce").fillna(0)
+        steps_done.append(f"✅ '{water_col}': converted '-' / blanks to 0.")
     else:
-        steps_done.append("ℹ️ WaterLevel column not found (skipped).")
+        steps_done.append("ℹ️ Water level column not detected (skipped).")
 
     # STEP 8 – Clean Asset column
     asset_col = next((c for c in df.columns if "Asset" in c), None)
@@ -343,7 +339,6 @@ if uploaded_files:
     all_dfs = []
     all_steps = {}
 
-    # Process each file
     for uploaded_file in uploaded_files:
         file_name = uploaded_file.name.lower()
 
@@ -370,9 +365,6 @@ if uploaded_files:
 
     merged_df = pd.concat(all_dfs, ignore_index=True)
 
-    # ==========================================================
-    # MERGED RESULTS
-    # ==========================================================
     st.markdown("---")
     st.subheader("✅ Merged Data (All Files Combined)")
     st.dataframe(merged_df.head(20), use_container_width=True)
@@ -380,9 +372,6 @@ if uploaded_files:
         f"✅ Merged dataset: {len(merged_df)} rows × {len(merged_df.columns)} columns from {len(uploaded_files)} file(s)."
     )
 
-    # ==========================================================
-    # DOWNLOAD SECTION
-    # ==========================================================
     st.markdown("---")
     st.subheader("💾 Export Cleaned Files")
 
@@ -401,8 +390,8 @@ if uploaded_files:
     export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
-    csv_buffer = io.StringIO()
-    export_df.to_csv(csv_buffer, index=False)
+    txt_buffer = io.StringIO()
+    export_df.to_csv(txt_buffer, index=False, sep="|")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -415,10 +404,10 @@ if uploaded_files:
         )
     with col2:
         st.download_button(
-            "📗 Download CSV File",
-            csv_buffer.getvalue(),
-            file_name="Escondida_QAQC_Cleaned_Merged.csv",
-            mime="text/csv",
+            "📄 Download TXT File",
+            txt_buffer.getvalue(),
+            file_name="Escondida_QAQC_Cleaned_Merged.txt",
+            mime="text/plain",
             use_container_width=True
         )
 
@@ -427,6 +416,8 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel or CSV files to begin.")
+
+
 
 
 
