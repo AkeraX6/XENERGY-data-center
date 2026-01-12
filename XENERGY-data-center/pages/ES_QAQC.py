@@ -344,7 +344,8 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    all_dfs = []
+    all_dfs_raw = []
+    all_dfs_cleaned = []
     all_steps = {}
 
     for uploaded_file in uploaded_files:
@@ -355,26 +356,21 @@ if uploaded_files:
         else:
             df = pd.read_excel(uploaded_file)
 
-        st.subheader(f"📄 {uploaded_file.name} (Before Cleaning)")
-        st.dataframe(df.head(10), use_container_width=True)
-        st.info(f"📏 Total rows: {len(df)}")
-
+        all_dfs_raw.append(df)
         df_cleaned, steps = process_file(df)
-        all_dfs.append(df_cleaned)
+        all_dfs_cleaned.append(df_cleaned)
         all_steps[uploaded_file.name] = steps
 
-        with st.expander(f"⚙️ Processing Steps for {uploaded_file.name}", expanded=False):
-            for step in steps:
-                st.markdown(
-                    f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                    f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
-                    unsafe_allow_html=True
-                )
-
-    merged_df = pd.concat(all_dfs, ignore_index=True)
+    merged_df_raw = pd.concat(all_dfs_raw, ignore_index=True)
+    merged_df = pd.concat(all_dfs_cleaned, ignore_index=True)
 
     st.markdown("---")
-    st.subheader("✅ Merged Data (All Files Combined)")
+    st.subheader("📋 Before Cleaning (All Files Merged)")
+    st.dataframe(merged_df_raw.head(20), use_container_width=True)
+    st.info(f"📏 Total rows before cleaning: {len(merged_df_raw)}")
+
+    st.markdown("---")
+    st.subheader("✅ After Cleaning (All Files Merged)")
     st.dataframe(merged_df.head(20), use_container_width=True)
     st.success(
         f"✅ Merged dataset: {len(merged_df)} rows × {len(merged_df.columns)} columns from {len(uploaded_files)} file(s)."
