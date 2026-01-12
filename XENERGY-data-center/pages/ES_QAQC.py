@@ -323,6 +323,14 @@ def process_file(df):
     else:
         steps_done.append("⚠️ 'Asset' column not found.")
 
+    # STEP 9 – Move Blast Date to the end (if it exists)
+    if "Blast Date" in df.columns:
+        cols = list(df.columns)
+        cols.remove("Blast Date")
+        cols.append("Blast Date")
+        df = df[cols]
+        steps_done.append("✅ Moved 'Blast Date' column to the end of the table.")
+
     return df, steps_done
 
 
@@ -416,3 +424,5 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel or CSV files to begin.")
+
+
