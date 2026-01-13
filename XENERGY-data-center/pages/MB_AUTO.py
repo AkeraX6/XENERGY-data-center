@@ -138,6 +138,7 @@ if operator_mapping_file is not None:
             ops_df = pd.read_excel(operator_mapping_file)
         
         # Assuming columns: "Name" and "Code" (or "name" and "code")
+        max_code = 0
         for idx, row in ops_df.iterrows():
             # Try to get columns with case-insensitive approach
             name = None
@@ -150,6 +151,10 @@ if operator_mapping_file is not None:
                     code = int(row[col]) if pd.notna(row[col]) else 0
             
             if name and code:
+                # Track the maximum code
+                if code > max_code:
+                    max_code = code
+                
                 # Check if this is the empty operator entry
                 if name.lower() == "empty" or name.lower() == "vacío" or name == "":
                     empty_operator_code = code
@@ -165,6 +170,11 @@ if operator_mapping_file is not None:
                         "tokens": s_tokens,
                         "ntok": len(s_tokens)
                     })
+        
+        # Set next_code to max_code + 1
+        if max_code > 0:
+            next_code = max_code + 1
+            
     except Exception as e:
         st.warning(f"⚠️ Could not read operator mapping file: {e}")
 
@@ -470,6 +480,8 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+
+
 
 
 
