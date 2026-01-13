@@ -307,27 +307,27 @@ if uploaded_file is not None:
                     if s_ns == rec["ns"]:
                         return rec["code"], "exact-nospace"
 
-                # 2️⃣ Token coverage + similarity
+                # 2️⃣ Token coverage + similarity (improved threshold)
                 best = None
                 for rec in ops_index:
                     have = sum(1 for t in rec["tokens"] if t in s_tokens)
-                    need = 2 if rec["ntok"] >= 3 else rec["ntok"]
+                    need = 1 if rec["ntok"] >= 3 else max(1, rec["ntok"] - 1)  # More lenient
                     if have >= need:
                         cov = have / max(rec["ntok"], 1)
                         sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
                         score = 0.7 * cov + 0.3 * sim
                         if best is None or score > best["score"]:
-                            best = {"code": rec["code"], "score": score}
-                if best and best["score"] >= 0.80:
+                            best = {"code": rec["code"], "score": score, "name": rec["name"]}
+                if best and best["score"] >= 0.65:  # Lowered from 0.80
                     return best["code"], "token-cover"
 
-                # 3️⃣ Fuzzy fallback
+                # 3️⃣ Fuzzy fallback (lowered threshold)
                 best = None
                 for rec in ops_index:
                     sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
                     if best is None or sim > best["sim"]:
-                        best = {"code": rec["code"], "sim": sim}
-                if best and best["sim"] >= 0.90:
+                        best = {"code": rec["code"], "sim": sim, "name": rec["name"]}
+                if best and best["sim"] >= 0.75:  # Lowered from 0.90
                     return best["code"], f"fuzzy({best['sim']:.2f})"
 
                 # 4️⃣ Unknown → assign new sequential code
@@ -438,5 +438,3 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
-
-
