@@ -400,15 +400,25 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("💾 Export Cleaned File")
 
-    option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
+    # Define default columns to export
+    default_columns = [
+        "Fecha", "Grupo", "Operador", "Turno", "Perforadora", "Fase", 
+        "Banco", "Malla", "Tipo Pozo", "ID pozo", "Coord X", "Coord Y", 
+        "Cota", "Tiempo (min)", "Mt/Hr", "N° Tricono", "Modelo"
+    ]
+    
+    # Filter default columns to only those that exist in the dataframe
+    available_default = [col for col in default_columns if col in df.columns]
 
-    if option == "⬇️ Download All Columns":
-        export_df = df
+    option = st.radio("Choose download option:", ["⬇️ Download Default Columns", "🧩 Download Selected Columns"])
+
+    if option == "⬇️ Download Default Columns":
+        export_df = df[available_default] if available_default else df
     else:
         selected_columns = st.multiselect(
             "Select columns (drag to reorder):",
             options=list(df.columns),
-            default=list(df.columns)
+            default=available_default
         )
         export_df = df[selected_columns] if selected_columns else df
 
@@ -460,6 +470,7 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+
 
 
 
