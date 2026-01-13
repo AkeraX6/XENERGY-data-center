@@ -260,6 +260,33 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'Modelo' not found")
 
+        # STEP 8b – Fill empty Modelo values by matching Fecha + N° Tricono
+        if "Modelo" in df.columns and "Fecha" in df.columns and "N° Tricono" in df.columns:
+            empty_count = df["Modelo"].isna().sum()
+            if empty_count > 0:
+                # Create a reference dict: (Fecha, N° Tricono) -> Modelo
+                modelo_ref = {}
+                for idx, row in df.iterrows():
+                    if pd.notna(row["Modelo"]) and pd.notna(row["Fecha"]) and pd.notna(row["N° Tricono"]):
+                        key = (str(row["Fecha"]).strip(), str(row["N° Tricono"]).strip())
+                        if key not in modelo_ref:
+                            modelo_ref[key] = row["Modelo"]
+                
+                # Fill empty Modelo values
+                filled_count = 0
+                for idx, row in df.iterrows():
+                    if pd.isna(row["Modelo"]) and pd.notna(row["Fecha"]) and pd.notna(row["N° Tricono"]):
+                        key = (str(row["Fecha"]).strip(), str(row["N° Tricono"]).strip())
+                        if key in modelo_ref:
+                            df.at[idx, "Modelo"] = modelo_ref[key]
+                            filled_count += 1
+                
+                steps_done.append(f"✅ Filled {filled_count} empty Modelo values using Fecha + N° Tricono matching")
+            else:
+                steps_done.append("ℹ️ No empty Modelo values to fill")
+        else:
+            steps_done.append("⚠️ Cannot fill Modelo: missing Modelo, Fecha, or N° Tricono columns")
+
         # STEP 9 – Map Operador names to IDs (with custom mapping or auto-detection)
         if "Operador" in df.columns:
             def best_operator_code_assign(raw_value: str):
