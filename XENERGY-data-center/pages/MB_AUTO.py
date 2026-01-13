@@ -128,6 +128,7 @@ ops_index = []
 new_ops_norm_to_code = {}
 next_code = 100
 new_operators_found = []
+empty_operator_code = 25  # Default if not found in mapping
 
 if operator_mapping_file is not None:
     try:
@@ -140,7 +141,11 @@ if operator_mapping_file is not None:
         for idx, row in ops_df.iterrows():
             name = str(row.get("name", "")).strip()
             code = int(row.get("code", 0))
-            if name and code:
+            
+            # Check if this is the empty operator entry
+            if name.lower() == "empty" or name.lower() == "vacío" or name == "":
+                empty_operator_code = code
+            elif name and code:
                 s_ws = strip_accents_lower_spaces(name)
                 s_ns = nospace(s_ws)
                 s_tokens = set(s_ws.split())
@@ -292,7 +297,7 @@ if uploaded_file is not None:
             def best_operator_code_assign(raw_value: str):
                 global next_code
                 if pd.isna(raw_value) or str(raw_value).strip() == "":
-                    return 25, "empty→25"
+                    return empty_operator_code, f"empty→{empty_operator_code}"
 
                 s_ws = strip_accents_lower_spaces(raw_value)
                 s_ns = nospace(s_ws)
