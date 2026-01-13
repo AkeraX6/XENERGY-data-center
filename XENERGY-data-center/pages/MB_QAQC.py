@@ -4,13 +4,66 @@ import re
 import io
 
 # ==================================================
+# HELPERS
+# ==================================================
+def read_any_file(uploaded_file) -> pd.DataFrame:
+    """
+    Reads Excel or CSV files robustly.
+    - Supports CSV with semicolon (;) or comma (,)
+    - If a CSV is read as a single column, it tries to split by ;
+    """
+    name = uploaded_file.name.lower()
+
+    if name.endswith(".csv"):
+        # Try semicolon first (common in Spanish/European exports)
+        try:
+            df = pd.read_csv(uploaded_file, sep=";", engine="python")
+        except Exception:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, engine="python")
+
+        # If still 1 column, try manual split
+        if df.shape[1] == 1:
+            col0 = str(df.columns[0])
+            if ";" in col0:
+                uploaded_file.seek(0)
+                raw = pd.read_csv(uploaded_file, header=None, engine="python")
+                split = raw[0].astype(str).str.split(";", expand=True)
+
+                # First row contains header
+                split.columns = split.iloc[0].tolist()
+                df = split.iloc[1:].reset_index(drop=True)
+
+        return df
+
+    # Excel
+    return pd.read_excel(uploaded_file)
+
+
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip spaces and normalize column names (keep original names but trimmed)."""
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def to_numeric_safely(df: pd.DataFrame, cols: list[str]) -> None:
+    """Convert columns to numeric if they exist (handles strings from CSV split)."""
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+
+# ==================================================
 # PAGE HEADER
 # ==================================================
 st.markdown(
     "<h2 style='text-align:center;'>📊 Mantos Blancos — QAQC Data Filter</h2>",
     unsafe_allow_html=True
 )
-st.markdown("<p style='text-align:center; color:gray;'>Automated cleaning and validation of QAQC drilling data.</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center; color:gray;'>Automated cleaning and validation of QAQC drilling data.</p>",
+    unsafe_allow_html=True
+)
 st.markdown("---")
 
 # 🔙 Back to Dashboard
@@ -22,48 +75,65 @@ if st.button("⬅️ Back to Menu", key="back_mbqaqc"):
 # FILE UPLOAD
 # ==================================================
 uploaded_files = st.file_uploader(
-    "📤 Upload your files (Excel or CSV)", 
+    "📤 Upload your files (Excel or CSV)",
     type=["xlsx", "xls", "csv"],
     accept_multiple_files=True
 )
 
 if uploaded_files:
-    # --- READ AND MERGE FILES ---
     all_dfs = []
     file_info = []
-    
+
     for uploaded_file in uploaded_files:
         try:
-            if uploaded_file.name.endswith(".csv"):
-                temp_df = pd.read_csv(uploaded_file)
-            else:
-                temp_df = pd.read_excel(uploaded_file)
-            
+            temp_df = read_any_file(uploaded_file)
+            temp_df = normalize_columns(temp_df)
+
             all_dfs.append(temp_df)
-            file_info.append({"name": uploaded_file.name, "rows": len(temp_df), "cols": len(temp_df.columns)})
+            file_info.append(
+                {"name": uploaded_file.name, "rows": len(temp_df), "cols": len(temp_df.columns)}
+            )
         except Exception as e:
             st.error(f"⚠️ Error reading {uploaded_file.name}: {e}")
-    
-    if all_dfs:
-        # Merge all dataframes
-        df = pd.concat(all_dfs, ignore_index=True)
-        
-        # --- DISPLAY FILE INFO ---
-        st.subheader("📂 Uploaded Files Summary")
-        files_summary_df = pd.DataFrame(file_info)
-        files_summary_df.columns = ["File Name", "Rows", "Columns"]
-        st.dataframe(files_summary_df, use_container_width=True)
-        
-        # --- DISPLAY MERGED BEFORE DATA ---
-        st.subheader("📄 Merged Data (Before Cleaning)")
-        st.dataframe(df.head(15), use_container_width=True)
-        st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
+
+    if not all_dfs:
+        st.stop()
+
+    # Merge all dataframes
+    df = pd.concat(all_dfs, ignore_index=True)
+    df = normalize_columns(df)
+
+    # Show detected columns (helps debug separators / header issues)
+    st.caption("✅ Columns detected after import:")
+    st.write(list(df.columns))
+
+    # --- DISPLAY FILE INFO ---
+    st.subheader("📂 Uploaded Files Summary")
+    files_summary_df = pd.DataFrame(file_info)
+    files_summary_df.columns = ["File Name", "Rows", "Columns"]
+    st.dataframe(files_summary_df, use_container_width=True)
+
+    # --- DISPLAY MERGED BEFORE DATA ---
+    st.subheader("📄 Merged Data (Before Cleaning)")
+    st.dataframe(df.head(15), use_container_width=True)
+    st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
 
     # ==================================================
     # CLEANING STEPS — SINGLE EXPANDER
     # ==================================================
     with st.expander("⚙️ See Processing Steps", expanded=False):
         steps_done = []
+
+        # Ensure numeric conversion for key numeric columns (CSV often reads them as strings)
+        to_numeric_safely(df, [
+            "Density",
+            "Local X (Design)",
+            "Local Y (Design)",
+            "Hole Length (Design)",
+            "Hole Length (Actual)",
+            "Explosive (kg) (Design)",
+            "Explosive (kg) (Actual)",
+        ])
 
         # STEP 1 – Remove rows with empty or zero Density
         if "Density" in df.columns:
@@ -86,13 +156,13 @@ if uploaded_files:
 
         # STEP 3 – Fill empty Boreholes per Blast
         if "Borehole" in df.columns and "Blast" in df.columns:
-            before = df["Borehole"].isna().sum()
+            before_missing = df["Borehole"].isna().sum() + (df["Borehole"].astype(str).str.strip() == "").sum()
 
             def fill_boreholes(group):
                 counter = 10000
                 new_bh = []
                 for val in group["Borehole"]:
-                    if pd.isna(val) or val == "":
+                    if pd.isna(val) or str(val).strip() == "":
                         new_bh.append(str(counter))
                         counter += 1
                     else:
@@ -101,8 +171,8 @@ if uploaded_files:
                 return group
 
             df = df.groupby("Blast", group_keys=False).apply(fill_boreholes)
-            after = df["Borehole"].isna().sum()
-            filled = before - after
+            after_missing = df["Borehole"].isna().sum() + (df["Borehole"].astype(str).str.strip() == "").sum()
+            filled = before_missing - after_missing
             steps_done.append(f"✅ Filled {filled} missing Borehole values")
         else:
             steps_done.append("❌ Missing 'Borehole' or 'Blast' columns")
@@ -148,12 +218,21 @@ if uploaded_files:
             steps_done.append("⚠️ Explosive columns not found")
 
         # STEP 7 – Clean column 'Asset' (keep only numbers)
-        if "Asset" in df.columns:
-            before_non_numeric = df["Asset"].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
-            df["Asset"] = df["Asset"].astype(str).str.extract(r"(\d+)", expand=False)
-            df["Asset"] = pd.to_numeric(df["Asset"], errors="coerce")
-            after_cleaned = df["Asset"].notna().sum()
-            steps_done.append(f"✅ Cleaned column 'Asset' — removed {before_non_numeric} non-numeric entries, kept {after_cleaned} numeric values")
+        # Supports "Asset" or "Asset." or "Asset (R)" etc.
+        asset_col = None
+        for c in df.columns:
+            if str(c).strip().lower().startswith("asset"):
+                asset_col = c
+                break
+
+        if asset_col:
+            before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
+            df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
+            df[asset_col] = pd.to_numeric(df[asset_col], errors="coerce")
+            after_cleaned = df[asset_col].notna().sum()
+            steps_done.append(
+                f"✅ Cleaned column '{asset_col}' — removed {before_non_numeric} non-numeric entries, kept {after_cleaned} numeric values"
+            )
         else:
             steps_done.append("⚠️ Column 'Asset' not found")
 
@@ -191,7 +270,7 @@ if uploaded_files:
         )
         export_df = df[selected_columns] if selected_columns else df
 
-    # Prepare Excel + CSV
+    # Prepare Excel + CSV in-memory (no filesystem writes)
     excel_buffer = io.BytesIO()
     export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
