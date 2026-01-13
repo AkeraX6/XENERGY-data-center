@@ -103,16 +103,6 @@ if uploaded_files:
     df = pd.concat(all_dfs, ignore_index=True)
     df = normalize_columns(df)
 
-    # Show detected columns (helps debug separators / header issues)
-    st.caption("✅ Columns detected after import:")
-    st.write(list(df.columns))
-
-    # --- DISPLAY FILE INFO ---
-    st.subheader("📂 Uploaded Files Summary")
-    files_summary_df = pd.DataFrame(file_info)
-    files_summary_df.columns = ["File Name", "Rows", "Columns"]
-    st.dataframe(files_summary_df, use_container_width=True)
-
     # --- DISPLAY MERGED BEFORE DATA ---
     st.subheader("📄 Merged Data (Before Cleaning)")
     st.dataframe(df.head(15), use_container_width=True)
@@ -235,6 +225,31 @@ if uploaded_files:
             )
         else:
             steps_done.append("⚠️ Column 'Asset' not found")
+
+        # STEP 8 – Convert "-" to 0 in Water Level column
+        if "Water Level" in df.columns:
+            before_count = (df["Water Level"].astype(str) == "-").sum()
+            df["Water Level"] = df["Water Level"].replace("-", 0)
+            df["Water Level"] = pd.to_numeric(df["Water Level"], errors="coerce")
+            steps_done.append(f"✅ Converted {before_count} '-' values to 0 in Water Level column")
+        else:
+            steps_done.append("⚠️ Column 'Water Level' not found")
+
+        # STEP 9 – Add Matrix column before Blast Date and move Blast Date to end
+        if "Blast Date" in df.columns:
+            # Create Matrix column filled with 0
+            df["Matrix"] = 0
+            
+            # Reorder: move Blast Date to the end and Matrix before it
+            cols = list(df.columns)
+            cols.remove("Blast Date")
+            cols.remove("Matrix")
+            cols.extend(["Matrix", "Blast Date"])
+            df = df[cols]
+            
+            steps_done.append("✅ Added 'Matrix' column (filled with 0) and moved 'Blast Date' to end")
+        else:
+            steps_done.append("⚠️ Column 'Blast Date' not found")
 
         # --- Display all steps in green cards ---
         for step in steps_done:
