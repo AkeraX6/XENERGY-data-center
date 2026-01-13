@@ -137,26 +137,34 @@ if operator_mapping_file is not None:
         else:
             ops_df = pd.read_excel(operator_mapping_file)
         
-        # Assuming columns: "name" and "code"
+        # Assuming columns: "Name" and "Code" (or "name" and "code")
         for idx, row in ops_df.iterrows():
-            name = str(row.get("name", "")).strip()
-            code = int(row.get("code", 0))
+            # Try to get columns with case-insensitive approach
+            name = None
+            code = None
             
-            # Check if this is the empty operator entry
-            if name.lower() == "empty" or name.lower() == "vacío" or name == "":
-                empty_operator_code = code
-            elif name and code:
-                s_ws = strip_accents_lower_spaces(name)
-                s_ns = nospace(s_ws)
-                s_tokens = set(s_ws.split())
-                ops_index.append({
-                    "name": name,
-                    "code": code,
-                    "ws": s_ws,
-                    "ns": s_ns,
-                    "tokens": s_tokens,
-                    "ntok": len(s_tokens)
-                })
+            for col in ops_df.columns:
+                if col.lower() == "name":
+                    name = str(row[col]).strip()
+                elif col.lower() == "code":
+                    code = int(row[col]) if pd.notna(row[col]) else 0
+            
+            if name and code:
+                # Check if this is the empty operator entry
+                if name.lower() == "empty" or name.lower() == "vacío" or name == "":
+                    empty_operator_code = code
+                else:
+                    s_ws = strip_accents_lower_spaces(name)
+                    s_ns = nospace(s_ws)
+                    s_tokens = set(s_ws.split())
+                    ops_index.append({
+                        "name": name,
+                        "code": code,
+                        "ws": s_ws,
+                        "ns": s_ns,
+                        "tokens": s_tokens,
+                        "ntok": len(s_tokens)
+                    })
     except Exception as e:
         st.warning(f"⚠️ Could not read operator mapping file: {e}")
 
@@ -187,16 +195,7 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Missing Coord X or Coord Y columns")
 
-        # STEP 2 – Remove unwanted Tipo Pozo rows
-        if "Tipo Pozo" in df.columns:
-            before = len(df)
-            df = df[~df["Tipo Pozo"].astype(str).str.lower().str.contains("aux|auxiliar|hundimiento", na=False)]
-            deleted = before - len(df)
-            steps_done.append(f"✅ Removed {deleted} rows with Auxiliar/Hundimiento Tipo Pozo")
-        else:
-            steps_done.append("⚠️ Column 'Tipo Pozo' not found")
-
-        # STEP 3 – Standardize Grupo values
+        # STEP 2 – Standardize Grupo values
         if "Grupo" in df.columns:
             df["Grupo"] = df["Grupo"].astype(str).str.upper().replace({
                 "G_4": 4, "G4": 4,
@@ -208,21 +207,21 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'Grupo' not found")
 
-        # STEP 4 – Replace Turno values
+        # STEP 3 – Replace Turno values
         if "Turno" in df.columns:
             df["Turno"] = df["Turno"].astype(str).str.upper().replace({"TA": 1, "TB": 2})
             steps_done.append("✅ Turno values converted (TA→1, TB→2)")
         else:
             steps_done.append("⚠️ Column 'Turno' not found")
 
-        # STEP 5 – Extract numeric part from Fase (remove F prefix)
+        # STEP 4 – Extract numeric part from Fase (remove F prefix)
         if "Fase" in df.columns:
             df["Fase"] = df["Fase"].astype(str).str.upper().str.replace("F", "", regex=False).str.extract(r"(\d+)", expand=False)
             steps_done.append("✅ Extracted numeric part from Fase (F17→17, F20→20, etc.)")
         else:
             steps_done.append("⚠️ Column 'Fase' not found")
 
-        # STEP 6 – Map Tipo Pozo categories
+        # STEP 5 – Map Tipo Pozo categories
         if "Tipo Pozo" in df.columns:
             def map_tipo_pozo(val):
                 val_lower = str(val).lower().strip()
@@ -238,7 +237,7 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'Tipo Pozo' not found")
 
-        # STEP 7 – Clean Perforadora column (remove 85 prefix, keep last 2 digits, remove leading 0)
+        # STEP 6 – Clean Perforadora column (remove 85 prefix, keep last 2 digits, remove leading 0)
         if "Perforadora" in df.columns:
             def clean_perforadora(val):
                 if pd.isna(val) or str(val).strip() == "":
@@ -258,14 +257,14 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'Perforadora' not found")
 
-        # STEP 8 – Transform Modelo column with prefix/suffix mappings
+        # STEP 7 – Transform Modelo column with prefix/suffix mappings
         if "Modelo" in df.columns:
             df["Modelo"] = df["Modelo"].apply(clean_modelo)
             steps_done.append("✅ Transformed Modelo values (TMG74→10074, TN55→1055, M32→2032, etc.)")
         else:
             steps_done.append("⚠️ Column 'Modelo' not found")
 
-        # STEP 8b – Fill empty Modelo values by matching Fecha + N° Tricono
+        # STEP 7b – Fill empty Modelo values by matching Fecha + N° Tricono
         if "Modelo" in df.columns and "Fecha" in df.columns and "N° Tricono" in df.columns:
             empty_count = df["Modelo"].isna().sum()
             if empty_count > 0:
@@ -292,7 +291,7 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Cannot fill Modelo: missing Modelo, Fecha, or N° Tricono columns")
 
-        # STEP 9 – Map Operador names to IDs (with custom mapping or auto-detection)
+        # STEP 8 – Map Operador names to IDs (with custom mapping or auto-detection)
         if "Operador" in df.columns:
             def best_operator_code_assign(raw_value: str):
                 global next_code
@@ -361,6 +360,8 @@ if uploaded_file is not None:
     if new_operators_found:
         with st.expander("📋 New Operators Detected", expanded=True):
             new_ops_df = pd.DataFrame(new_operators_found)
+            # Rename columns to match input format (Name, Code)
+            new_ops_df.columns = ["Name", "Code"]
             st.dataframe(new_ops_df, use_container_width=True)
 
     # ==================================================
@@ -419,6 +420,8 @@ if uploaded_file is not None:
     if new_operators_found:
         with col3:
             new_ops_df = pd.DataFrame(new_operators_found)
+            # Rename columns to match input format (Name, Code)
+            new_ops_df.columns = ["Name", "Code"]
             new_ops_buffer = io.BytesIO()
             new_ops_df.to_excel(new_ops_buffer, index=False, engine="openpyxl")
             new_ops_buffer.seek(0)
@@ -435,3 +438,5 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+
+
