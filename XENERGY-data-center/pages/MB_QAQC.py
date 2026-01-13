@@ -227,13 +227,13 @@ if uploaded_files:
             steps_done.append("⚠️ Column 'Asset' not found")
 
         # STEP 8 – Convert "-" to 0 in Water Level column
-        if "Water Level" in df.columns:
-            before_count = (df["Water Level"].astype(str) == "-").sum()
-            df["Water Level"] = df["Water Level"].replace("-", 0)
-            df["Water Level"] = pd.to_numeric(df["Water Level"], errors="coerce")
-            steps_done.append(f"✅ Converted {before_count} '-' values to 0 in Water Level column")
+        if "Water level" in df.columns:
+            before_count = (df["Water level"].astype(str) == "-").sum()
+            df["Water level"] = df["Water level"].replace("-", 0)
+            df["Water level"] = pd.to_numeric(df["Water level"], errors="coerce")
+            steps_done.append(f"✅ Converted {before_count} '-' values to 0 in Water level column")
         else:
-            steps_done.append("⚠️ Column 'Water Level' not found")
+            steps_done.append("⚠️ Column 'Water level' not found")
 
         # STEP 9 – Add Matrix column before Blast Date and move Blast Date to end
         if "Blast Date" in df.columns:
@@ -316,3 +316,5 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
+
