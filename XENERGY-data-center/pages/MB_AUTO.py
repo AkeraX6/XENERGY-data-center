@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+from difflib import SequenceMatcher
+from unicodedata import normalize
 
 # ==================================================
 # PAGE HEADER
@@ -19,13 +21,147 @@ if st.button("⬅️ Back to Menu", key="back_mbauto"):
     st.rerun()
 
 # ==================================================
-# FILE UPLOAD
+# HELPER FUNCTIONS FOR OPERATOR MATCHING
 # ==================================================
-uploaded_file = st.file_uploader("📤 Upload your Excel file", type=["xlsx", "xls", "csv"])
+def strip_accents_lower_spaces(s):
+    """Remove accents and convert to lowercase."""
+    if pd.isna(s):
+        return ""
+    s = str(s).strip()
+    s = normalize("NFD", s)
+    s = "".join(c for c in s if normalize("NFD", c)[0] == c)
+    return s.lower()
+
+def nospace(s):
+    """Remove spaces."""
+    return s.replace(" ", "")
+
+def clean_modelo(val):
+    """
+    Transform Modelo column with these mappings (ignoring case, spaces, special chars):
+    TNXXX=10XXX
+    TMGXXX=100XXX
+    TMXXX=10XXX
+    XXXM=20XXX
+    MXXX=20XXX
+    GSXXX=300XXX
+    XXXGS=300XXX
+    GXXX=30XXX
+    XXXTH=400XXX
+    THXXX=400XXX
+    XXXR=50XXX
+    RXXX=50XXX
+    XXXTM=10XXX
+    XXXTN=10XXX
+    XXXG=30XXX
+    XXXTMG=100XXX
+    """
+    if pd.isna(val) or str(val).strip() == "":
+        return None
+    
+    # Normalize: remove spaces, uppercase, remove special chars except letters/digits
+    s = str(val).strip().upper().replace(" ", "")
+    s = re.sub(r"[^A-Z0-9]", "", s)
+    
+    if not s:
+        return None
+    
+    # Extract the numeric part
+    digits = re.findall(r"\d+", s)
+    if not digits:
+        return None
+    
+    numeric_part = digits[0]
+    
+    # Check prefixes first (order matters - more specific first)
+    if s.startswith("TMG"):
+        return f"100{numeric_part}"
+    elif s.startswith("TM"):
+        return f"10{numeric_part}"
+    elif s.startswith("TN"):
+        return f"10{numeric_part}"
+    elif s.startswith("GS"):
+        return f"300{numeric_part}"
+    elif s.startswith("G"):
+        return f"30{numeric_part}"
+    elif s.startswith("TH"):
+        return f"400{numeric_part}"
+    elif s.startswith("M"):
+        return f"20{numeric_part}"
+    elif s.startswith("R"):
+        return f"50{numeric_part}"
+    # Check suffixes (order matters - more specific first)
+    elif s.endswith("TMG"):
+        return f"100{numeric_part}"
+    elif s.endswith("TM"):
+        return f"10{numeric_part}"
+    elif s.endswith("TN"):
+        return f"10{numeric_part}"
+    elif s.endswith("GS"):
+        return f"300{numeric_part}"
+    elif s.endswith("G"):
+        return f"30{numeric_part}"
+    elif s.endswith("TH"):
+        return f"400{numeric_part}"
+    elif s.endswith("M"):
+        return f"20{numeric_part}"
+    elif s.endswith("R"):
+        return f"50{numeric_part}"
+    else:
+        # If no pattern matches, return numeric part as-is
+        return numeric_part
+
+# ==================================================
+# FILE UPLOAD — DATA AND OPERATORS
+# ==================================================
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    uploaded_file = st.file_uploader("📤 Upload your Excel file (Data)", type=["xlsx", "xls", "csv"])
+
+with col2:
+    st.markdown("**Operator Mapping:**")
+    operator_mapping_file = st.file_uploader("📋 Upload operator mapping (optional)", type=["xlsx", "xls", "csv"], key="operator_map")
+
+# Initialize operator index
+ops_index = []
+new_ops_norm_to_code = {}
+next_code = 100
+new_operators_found = []
+
+if operator_mapping_file is not None:
+    try:
+        if operator_mapping_file.name.endswith(".csv"):
+            ops_df = pd.read_csv(operator_mapping_file)
+        else:
+            ops_df = pd.read_excel(operator_mapping_file)
+        
+        # Assuming columns: "name" and "code"
+        for idx, row in ops_df.iterrows():
+            name = str(row.get("name", "")).strip()
+            code = int(row.get("code", 0))
+            if name and code:
+                s_ws = strip_accents_lower_spaces(name)
+                s_ns = nospace(s_ws)
+                s_tokens = set(s_ws.split())
+                ops_index.append({
+                    "name": name,
+                    "code": code,
+                    "ws": s_ws,
+                    "ns": s_ns,
+                    "tokens": s_tokens,
+                    "ntok": len(s_tokens)
+                })
+    except Exception as e:
+        st.warning(f"⚠️ Could not read operator mapping file: {e}")
 
 if uploaded_file is not None:
     # --- READ FILE ---
-    df = pd.read_excel(uploaded_file)
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+    
     st.subheader("📄 Original Data (Before Cleaning)")
     st.dataframe(df.head(10), use_container_width=True)
     st.info(f"📏 Total rows before cleaning: {len(df)}")
@@ -37,15 +173,14 @@ if uploaded_file is not None:
     # CLEANING STEPS — SINGLE EXPANDER
     # ==================================================
     with st.expander("⚙️ See Processing Steps", expanded=False):
-        # STEP 1 – Remove rows with empty Coord X/Y/Cota
-        coord_cols = ["Coord X", "Coord Y", "Cota"]
-        if all(col in df.columns for col in coord_cols):
+        # STEP 1 – Remove rows with empty Coord X/Y
+        if "Coord X" in df.columns and "Coord Y" in df.columns:
             before = len(df)
-            df = df.dropna(subset=coord_cols, how="any")
+            df = df.dropna(subset=["Coord X", "Coord Y"], how="all")
             deleted = before - len(df)
-            steps_done.append(f"✅ Removed {deleted} rows missing Coord X/Y/Cota")
+            steps_done.append(f"✅ Removed {deleted} rows missing both Coord X and Coord Y")
         else:
-            steps_done.append("❌ Missing one or more coordinate columns")
+            steps_done.append("⚠️ Missing Coord X or Coord Y columns")
 
         # STEP 2 – Remove unwanted Tipo Pozo rows
         if "Tipo Pozo" in df.columns:
@@ -59,10 +194,12 @@ if uploaded_file is not None:
         # STEP 3 – Standardize Grupo values
         if "Grupo" in df.columns:
             df["Grupo"] = df["Grupo"].astype(str).str.upper().replace({
-                "G_1": 1, "G1": 1, "G_2": 2, "G2": 2,
-                "G_3": 3, "G3": 3, "G_4": 4, "G4": 4
+                "G_4": 4, "G4": 4,
+                "G_2": 2, "G2": 2,
+                "G_1": 1, "G1": 1,
+                "G_3": 3, "G3": 3
             })
-            steps_done.append("✅ Grupo values standardized (G1–G4 → 1–4)")
+            steps_done.append("✅ Grupo values standardized (G_4→4, G_2→2, G_1→1, G_3→3)")
         else:
             steps_done.append("⚠️ Column 'Grupo' not found")
 
@@ -73,78 +210,126 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'Turno' not found")
 
-        # STEP 5 – Extract numeric part from Fase
+        # STEP 5 – Extract numeric part from Fase (remove F prefix)
         if "Fase" in df.columns:
-            df["Fase"] = df["Fase"].astype(str).str.extract(r"(\d+)", expand=False)
-            steps_done.append("✅ Extracted numeric part from Fase column")
+            df["Fase"] = df["Fase"].astype(str).str.upper().str.replace("F", "", regex=False).str.extract(r"(\d+)", expand=False)
+            steps_done.append("✅ Extracted numeric part from Fase (F17→17, F20→20, etc.)")
         else:
             steps_done.append("⚠️ Column 'Fase' not found")
 
         # STEP 6 – Map Tipo Pozo categories
         if "Tipo Pozo" in df.columns:
-            df["Tipo Pozo"] = df["Tipo Pozo"].astype(str).str.title().replace({
-                "Produccion": 1, "Buffer": 2, "Alergue": 3, "Repaso": 4, "Relleno": 5
-            })
-            steps_done.append("✅ Tipo Pozo categories mapped to numeric codes")
+            def map_tipo_pozo(val):
+                val_lower = str(val).lower().strip()
+                if "produccion" in val_lower:
+                    return 1
+                elif "buffer" in val_lower:
+                    return 2
+                elif any(x in val_lower for x in ["aux", "auxiliar", "relleno", "repaso", "alargue", "hundimiento"]):
+                    return 3
+                return val
+            df["Tipo Pozo"] = df["Tipo Pozo"].apply(map_tipo_pozo)
+            steps_done.append("✅ Tipo Pozo mapped (Produccion→1, Buffer→2, aux/Auxiliar/relleno/repaso/alargue/hundimiento→3)")
         else:
             steps_done.append("⚠️ Column 'Tipo Pozo' not found")
 
-        # STEP 7 – Clean Modelo column
-        if "Modelo" in df.columns:
-            def clean_modelo(val):
+        # STEP 7 – Clean Perforadora column (remove 85 prefix, keep last 2 digits, remove leading 0)
+        if "Perforadora" in df.columns:
+            def clean_perforadora(val):
                 if pd.isna(val) or str(val).strip() == "":
                     return None
-                val = str(val).strip().upper()
-                digits = re.findall(r"\d+", val)
-                if not digits:
+                val = str(val).strip()
+                # Remove 85 prefix if present
+                if val.startswith("85"):
+                    val = val[2:]
+                # Convert to int to remove leading zeros, then back to string
+                try:
+                    return str(int(val))
+                except:
                     return None
-                num = digits[0]
-                return num[:2] if len(num) >= 3 else num
 
-            df["Modelo"] = df["Modelo"].apply(clean_modelo).fillna("53")
-            steps_done.append("✅ Cleaned Modelo values; empty entries filled with 53")
+            df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
+            steps_done.append("✅ Cleaned Perforadora values (8504→4, 8510→10, 8514→14, etc.)")
+        else:
+            steps_done.append("⚠️ Column 'Perforadora' not found")
+
+        # STEP 8 – Transform Modelo column with prefix/suffix mappings
+        if "Modelo" in df.columns:
+            df["Modelo"] = df["Modelo"].apply(clean_modelo)
+            steps_done.append("✅ Transformed Modelo values (TMG74→10074, TN55→1055, M32→2032, etc.)")
         else:
             steps_done.append("⚠️ Column 'Modelo' not found")
 
-        # STEP 8 – Map Operador names to IDs
-        operator_map = {
-            "alejandro maldonado m.": 1, "alex diaz d.": 2, "anderson torres": 3,
-            "boris cifuentes a.": 4, "celestino lopez": 5, "celestino lopez lopez": 5,
-            "christian gallegos g.": 6, "cristhian rivas lopez": 7, "cristian quinteros": 8,
-            "cristian yañez g": 9, "daniel julio s.": 10, "danilo manquez c.": 11,
-            "eduardo leon p.": 12, "eduardo paredes c.": 13, "emerson gonzalez corona": 14,
-            "favian castillo g.": 15, "felix cifuentes a.": 16, "fernando caceres c.": 17,
-            "fernando gonzalez g.": 18, "francisco bolta g.": 19, "francisco curin h.": 20,
-            "freddy olivares r.": 21, "jaime tirado c.": 22, "javier gaete f.": 23,
-            "jorge alday a.": 24, "jorge muñoz": 25, "jorge muñoz v.": 25,
-            "julio araya p.": 26, "luis campos d.": 27, "luis flores": 28,
-            "manuel valencia r.": 29, "marcelo angel c.": 30, "marco jofre r.": 31,
-            "marcos machuca alday": 32, "mario quintana g.": 33, "mauricio salazar": 34,
-            "miguel carrasco m.": 35, "mirto canivilo b.": 36, "nicolas muñoz": 37,
-            "oscar carrizo f.": 38, "oscar ocayo c.": 39, "oscar ocayo carmona": 39,
-            "oscar perez g.": 40, "patricio faundes": 41, "rene zarricueta": 42,
-            "ruben saez a.": 43, "solange hernández": 44, "vincent veliz a.": 45,
-            "yasna mena": 46
-        }
-
+        # STEP 9 – Map Operador names to IDs (with custom mapping or auto-detection)
         if "Operador" in df.columns:
-            df["Operador_original"] = df["Operador"]
-            df["Operador_clean"] = df["Operador"].astype(str).str.lower().str.strip()
-            df["Operador_ID"] = df["Operador_clean"].map(operator_map).fillna(47)
-            unknown = df[df["Operador_ID"] == 47]["Operador"].unique()
-            df["Operador"] = df["Operador_ID"]
-            df.drop(columns=["Operador_clean", "Operador_ID"], inplace=True)
-            steps_done.append(f"✅ Operator names mapped; {len(unknown)} unknowns set to ID 47")
+            def best_operator_code_assign(raw_value: str):
+                global next_code
+                if pd.isna(raw_value) or str(raw_value).strip() == "":
+                    return 25, "empty→25"
+
+                s_ws = strip_accents_lower_spaces(raw_value)
+                s_ns = nospace(s_ws)
+                s_tokens = set(s_ws.split())
+
+                # 1️⃣ Exact nospace match
+                for rec in ops_index:
+                    if s_ns == rec["ns"]:
+                        return rec["code"], "exact-nospace"
+
+                # 2️⃣ Token coverage + similarity
+                best = None
+                for rec in ops_index:
+                    have = sum(1 for t in rec["tokens"] if t in s_tokens)
+                    need = 2 if rec["ntok"] >= 3 else rec["ntok"]
+                    if have >= need:
+                        cov = have / max(rec["ntok"], 1)
+                        sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
+                        score = 0.7 * cov + 0.3 * sim
+                        if best is None or score > best["score"]:
+                            best = {"code": rec["code"], "score": score}
+                if best and best["score"] >= 0.80:
+                    return best["code"], "token-cover"
+
+                # 3️⃣ Fuzzy fallback
+                best = None
+                for rec in ops_index:
+                    sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
+                    if best is None or sim > best["sim"]:
+                        best = {"code": rec["code"], "sim": sim}
+                if best and best["sim"] >= 0.90:
+                    return best["code"], f"fuzzy({best['sim']:.2f})"
+
+                # 4️⃣ Unknown → assign new sequential code
+                if s_ns in new_ops_norm_to_code:
+                    return new_ops_norm_to_code[s_ns], "new-reuse"
+
+                new_code = next_code
+                next_code += 1
+                new_ops_norm_to_code[s_ns] = new_code
+                new_operators_found.append({"name": raw_value, "code": new_code})
+                return new_code, "new-assign"
+
+            df["Operador"] = df["Operador"].apply(lambda x: best_operator_code_assign(x)[0])
+            
+            # Show new operators found
+            if new_operators_found:
+                steps_done.append(f"✅ Operador mapping applied; {len(new_operators_found)} new operators assigned")
+            else:
+                steps_done.append("✅ Operador mapping applied")
         else:
             steps_done.append("⚠️ Column 'Operador' not found")
-
-        # --- Display Steps ---
         for step in steps_done:
             st.markdown(
                 f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
                 f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
                 unsafe_allow_html=True
             )
+    
+    # Display new operators if any were found
+    if new_operators_found:
+        with st.expander("📋 New Operators Detected", expanded=True):
+            new_ops_df = pd.DataFrame(new_operators_found)
+            st.dataframe(new_ops_df, use_container_width=True)
 
     # ==================================================
     # AFTER CLEANING — SHOW RESULTS
@@ -180,7 +365,7 @@ if uploaded_file is not None:
     csv_buffer = io.StringIO()
     export_df.to_csv(csv_buffer, index=False)
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.download_button(
             "📘 Download Excel File",
@@ -197,10 +382,24 @@ if uploaded_file is not None:
             mime="text/csv",
             use_container_width=True
         )
+    
+    # Download new operators mapping if new operators were found
+    if new_operators_found:
+        with col3:
+            new_ops_df = pd.DataFrame(new_operators_found)
+            new_ops_buffer = io.BytesIO()
+            new_ops_df.to_excel(new_ops_buffer, index=False, engine="openpyxl")
+            new_ops_buffer.seek(0)
+            st.download_button(
+                "📋 Download New Operators",
+                new_ops_buffer,
+                file_name="MB_New_Operators.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.caption("Built by Maxam -Omar El Kendi-")
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
-
