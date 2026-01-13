@@ -21,16 +21,43 @@ if st.button("⬅️ Back to Menu", key="back_mbqaqc"):
 # ==================================================
 # FILE UPLOAD
 # ==================================================
-uploaded_file = st.file_uploader("📤 Upload your Excel file", type=["xlsx", "xls"])
+uploaded_files = st.file_uploader(
+    "📤 Upload your files (Excel or CSV)", 
+    type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True
+)
 
-if uploaded_file is not None:
-    # --- READ FILE ---
-    df = pd.read_excel(uploaded_file)
-
-    # --- DISPLAY BEFORE DATA ---
-    st.subheader("📄 Original Data (Before Cleaning)")
-    st.dataframe(df.head(10), use_container_width=True)
-    st.info(f"📏 Total rows before cleaning: {len(df)}")
+if uploaded_files:
+    # --- READ AND MERGE FILES ---
+    all_dfs = []
+    file_info = []
+    
+    for uploaded_file in uploaded_files:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                temp_df = pd.read_csv(uploaded_file)
+            else:
+                temp_df = pd.read_excel(uploaded_file)
+            
+            all_dfs.append(temp_df)
+            file_info.append({"name": uploaded_file.name, "rows": len(temp_df), "cols": len(temp_df.columns)})
+        except Exception as e:
+            st.error(f"⚠️ Error reading {uploaded_file.name}: {e}")
+    
+    if all_dfs:
+        # Merge all dataframes
+        df = pd.concat(all_dfs, ignore_index=True)
+        
+        # --- DISPLAY FILE INFO ---
+        st.subheader("📂 Uploaded Files Summary")
+        files_summary_df = pd.DataFrame(file_info)
+        files_summary_df.columns = ["File Name", "Rows", "Columns"]
+        st.dataframe(files_summary_df, use_container_width=True)
+        
+        # --- DISPLAY MERGED BEFORE DATA ---
+        st.subheader("📄 Merged Data (Before Cleaning)")
+        st.dataframe(df.head(15), use_container_width=True)
+        st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
 
     # ==================================================
     # CLEANING STEPS — SINGLE EXPANDER
@@ -194,8 +221,4 @@ if uploaded_file is not None:
     st.caption("Built by Maxam -Omar El Kendi-")
 
 else:
-    st.info("📂 Please upload an Excel file to begin.")
-
-
-
-
+    st.info("📂 Please upload one or more Excel/CSV files to begin.")
