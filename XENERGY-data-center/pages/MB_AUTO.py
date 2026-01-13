@@ -276,7 +276,16 @@ if uploaded_file is not None:
                         if key not in modelo_ref:
                             modelo_ref[key] = row["Modelo"]
                 
-                # Fill empty Modelo values
+                # Create secondary fallback: (Fecha, Fase, Grupo) -> Modelo
+                modelo_fallback = {}
+                if "Fase" in df.columns and "Grupo" in df.columns:
+                    for idx, row in df.iterrows():
+                        if pd.notna(row["Modelo"]) and pd.notna(row["Fecha"]) and pd.notna(row["Fase"]) and pd.notna(row["Grupo"]):
+                            key = (str(row["Fecha"]).strip(), str(row["Fase"]).strip(), str(row["Grupo"]).strip())
+                            if key not in modelo_fallback:
+                                modelo_fallback[key] = row["Modelo"]
+                
+                # Fill empty Modelo values - PRIMARY match (Fecha + N° Tricono)
                 filled_count = 0
                 for idx, row in df.iterrows():
                     if pd.isna(row["Modelo"]) and pd.notna(row["Fecha"]) and pd.notna(row["N° Tricono"]):
@@ -285,11 +294,24 @@ if uploaded_file is not None:
                             df.at[idx, "Modelo"] = modelo_ref[key]
                             filled_count += 1
                 
-                steps_done.append(f"✅ Filled {filled_count} empty Modelo values using Fecha + N° Tricono matching")
+                # Fill remaining empty Modelo values - FALLBACK match (Fecha + Fase + Grupo)
+                fallback_count = 0
+                if "Fase" in df.columns and "Grupo" in df.columns:
+                    for idx, row in df.iterrows():
+                        if pd.isna(row["Modelo"]) and pd.notna(row["Fecha"]) and pd.notna(row["Fase"]) and pd.notna(row["Grupo"]):
+                            key = (str(row["Fecha"]).strip(), str(row["Fase"]).strip(), str(row["Grupo"]).strip())
+                            if key in modelo_fallback:
+                                df.at[idx, "Modelo"] = modelo_fallback[key]
+                                fallback_count += 1
+                
+                if filled_count > 0 or fallback_count > 0:
+                    steps_done.append(f"✅ Filled {filled_count} Modelo values (Fecha+N°Tricono) + {fallback_count} via fallback (Fecha+Fase+Grupo)")
+                else:
+                    steps_done.append("ℹ️ No empty Modelo values to fill")
             else:
                 steps_done.append("ℹ️ No empty Modelo values to fill")
         else:
-            steps_done.append("⚠️ Cannot fill Modelo: missing Modelo, Fecha, or N° Tricono columns")
+            steps_done.append("⚠️ Cannot fill Modelo: missing required columns")
 
         # STEP 8 – Map Operador names to IDs (with custom mapping or auto-detection)
         if "Operador" in df.columns:
@@ -438,3 +460,6 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel file to begin.")
+else:
+    st.info("📂 Please upload an Excel file to begin.")
+
