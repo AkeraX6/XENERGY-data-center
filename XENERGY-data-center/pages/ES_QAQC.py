@@ -100,20 +100,43 @@ def extract_level_from_blast(text):
 
 def extract_expansion_from_blast(text):
     """
-    Expansion from Blast examples:
-      - 3040_N17B_6008_... → 17
-      - 2545_PL1_5001 ...  → 1
-      - 2995_S04_6001 ...  → 4
-      - 3010_L05_6018 ...  → 5
-      - 2620_E07_5001 ...  → 7
+    Expansion from Blast examples with special mappings:
+      - N17B → 170
+      - N17 → 17
+      - PL1S → 111
+      - PL1 → 1
+      - S04 → 4
+      - L05 → 5
+      - E07 → 7
+      etc.
     """
     if pd.isna(text):
         return None
     txt = str(text).upper()
-    m = re.search(r"(?:N|PL|L|S|E)(\d{1,2})", txt)
-    if not m:
-        return None
-    return int(m.group(1))
+    
+    # Special cases first (most specific to least specific)
+    if "N17B" in txt:
+        return 170
+    if "PL1S" in txt:
+        return 111
+    
+    # Then check for general patterns
+    # N17 → 17
+    m = re.search(r"N(\d{1,2})(?![A-Z])", txt)
+    if m:
+        return int(m.group(1))
+    
+    # PL1 → 1 (without S)
+    m = re.search(r"PL(\d{1,2})(?![A-Z])", txt)
+    if m:
+        return int(m.group(1))
+    
+    # Standard patterns: S04=4, L05=5, E07=7
+    m = re.search(r"(?:S|L|E)(\d{1,2})", txt)
+    if m:
+        return int(m.group(1))
+    
+    return None
 
 
 def parse_borehole_and_grid(raw_val):
@@ -420,5 +443,3 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel or CSV files to begin.")
-
-
