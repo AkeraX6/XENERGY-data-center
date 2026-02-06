@@ -80,11 +80,11 @@ if uploaded_file is not None:
         # READ FILE
         # ==========================================================
         if filename.endswith('.csv'):
-            # Read CSV with header at row 4 (0-indexed = row 5 in display)
-            df_full = pd.read_csv(uploaded_file, header=None)
+            # Read CSV - headers are in row 1 (index 0)
+            df_full = pd.read_csv(uploaded_file, header=0)
         else:
-            # Read Excel with header at row 4 (0-indexed = row 5 in display)
-            df_full = pd.read_excel(uploaded_file, header=None)
+            # Read Excel - headers are in row 1 (index 0)
+            df_full = pd.read_excel(uploaded_file, header=0)
         
         st.subheader("📄 Original Data (Before Processing)")
         st.dataframe(df_full.head(10), use_container_width=True)
@@ -97,13 +97,14 @@ if uploaded_file is not None:
         # ==========================================================
         with st.expander("⚙️ See Processing Steps", expanded=True):
             
-            # STEP 1 – Extract Date from Row 2 (index 1)
+            # STEP 1 – Extract Date from Row 2 (Variable descriptions row)
             date_found = None
             month_num = None
             year_num = None
             
-            if len(df_full) > 1:
-                row2 = df_full.iloc[1]
+            # Row 2 in the file is index 0 in the data (first row after header)
+            if len(df_full) > 0:
+                row2 = df_full.iloc[0]  # First data row (Variable descriptions)
                 for cell in row2:
                     if pd.notna(cell):
                         cell_str = str(cell)
@@ -158,15 +159,19 @@ if uploaded_file is not None:
             else:
                 steps_done.append("⚠️ No date found in row 2. Month and Year columns will be empty.")
             
-            # STEP 2 – Extract headers from row 5 (index 4)
-            if len(df_full) > 4:
-                headers = df_full.iloc[4].astype(str).str.strip().str.lower()
-                df_data = df_full.iloc[5:].copy()  # Data starts from row 6 (index 5)
+            # STEP 2 – Data starts from row 5 (index 3 after header)
+            # Rows 1-3 after header are: Variable descriptions, Variable types, Variable defaults
+            if len(df_full) > 3:
+                # Get the original headers (already read)
+                headers = [str(col).strip().lower() for col in df_full.columns]
+                
+                # Data starts from row 4 (index 3) - skip description, types, defaults rows
+                df_data = df_full.iloc[3:].copy()
                 df_data.columns = headers
                 df_data = df_data.reset_index(drop=True)
-                steps_done.append(f"✅ Headers extracted from row 5. Data starts from row 6.")
+                steps_done.append(f"✅ Headers extracted. Data starts from row 5 ({len(df_data)} data rows).")
             else:
-                st.error("⚠️ File has less than 5 rows. Cannot extract headers.")
+                st.error("⚠️ File has insufficient rows. Cannot extract data.")
                 st.stop()
             
             # STEP 3 – Select required columns
@@ -179,22 +184,35 @@ if uploaded_file is not None:
             found_columns = []
             column_mapping = {}
             
+            # Create a lookup dictionary for available columns
+            available_cols_lower = {col.lower(): col for col in df_data.columns}
+            
             for req_col in required_columns:
+                req_col_lower = req_col.lower()
+                
                 # Try exact match first
-                if req_col in df_data.columns:
+                if req_col_lower in available_cols_lower:
                     found_columns.append(req_col)
-                    column_mapping[req_col] = req_col
+                    column_mapping[req_col] = available_cols_lower[req_col_lower]
                 else:
-                    # Try fuzzy match (columns might have variations)
-                    for col in df_data.columns:
-                        if req_col.replace('_', '') in col.replace('_', '').replace(' ', ''):
-                            found_columns.append(col)
-                            column_mapping[req_col] = col
+                    # Try partial match (columns might have variations like ed_cut for cut)
+                    for avail_col_lower, avail_col_orig in available_cols_lower.items():
+                        # Check if the required column is contained in the available column
+                        if req_col_lower in avail_col_lower or avail_col_lower in req_col_lower:
+                            found_columns.append(req_col)
+                            column_mapping[req_col] = avail_col_orig
                             break
+                        # Check without underscores
+                        if req_col_lower.replace('_', '') in avail_col_lower.replace('_', ''):
+                            found_columns.append(req_col)
+                            column_mapping[req_col] = avail_col_orig
+                            break
+            
+            # Show available columns for debugging
+            st.info(f"📋 Available columns in file: {', '.join(df_data.columns.tolist())}")
             
             if len(found_columns) == 0:
                 st.error("⚠️ None of the required columns were found in the file.")
-                st.info("Available columns: " + ", ".join(df_data.columns.tolist()))
                 st.stop()
             
             # Extract only the found columns
@@ -202,7 +220,7 @@ if uploaded_file is not None:
             for req_col in required_columns:
                 if req_col in column_mapping:
                     actual_col = column_mapping[req_col]
-                    output_df[req_col] = df_data[actual_col]
+                    output_df[req_col] = df_data[actual_col].values
                 else:
                     output_df[req_col] = pd.NA
             
