@@ -208,9 +208,6 @@ if uploaded_file is not None:
                             column_mapping[req_col] = avail_col_orig
                             break
             
-            # Show available columns for debugging
-            st.info(f"📋 Available columns in file: {', '.join(df_data.columns.tolist())}")
-            
             if len(found_columns) == 0:
                 st.error("⚠️ None of the required columns were found in the file.")
                 st.stop()
@@ -264,6 +261,9 @@ if uploaded_file is not None:
         st.markdown("---")
         st.subheader("💾 Export Processed File")
         
+        # Get the base filename without extension
+        base_filename = filename.rsplit('.', 1)[0]  # Remove extension
+        
         # Prepare Excel download
         excel_buffer = io.BytesIO()
         output_df.to_excel(excel_buffer, index=False, engine="openpyxl")
@@ -278,7 +278,7 @@ if uploaded_file is not None:
             st.download_button(
                 "📘 Download Excel File",
                 excel_buffer,
-                file_name="Escondida_BlockModel_Processed.xlsx",
+                file_name=f"{base_filename}_cleaned.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -286,7 +286,7 @@ if uploaded_file is not None:
             st.download_button(
                 "📗 Download CSV File",
                 csv_buffer.getvalue(),
-                file_name="Escondida_BlockModel_Processed.csv",
+                file_name=f"{base_filename}_cleaned.csv",
                 mime="text/csv",
                 use_container_width=True
             )
