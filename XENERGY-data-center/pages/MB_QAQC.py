@@ -207,7 +207,25 @@ if uploaded_files:
         else:
             steps_done.append("⚠️ Explosive columns not found")
 
-        # STEP 7 – Clean column 'Asset' (keep only numbers)
+        # STEP 6.5 – Cross-fill Stemming
+        if "Stemming (Design)" in df.columns and "Stemming (Actual)" in df.columns:
+            # Replace "-" with NaN for proper handling
+            df["Stemming (Design)"] = df["Stemming (Design)"].replace("-", pd.NA)
+            df["Stemming (Actual)"] = df["Stemming (Actual)"].replace("-", pd.NA)
+            
+            # Count how many will be filled
+            before_fill = df["Stemming (Design)"].isna().sum()
+            
+            # Cross-fill: Design from Actual
+            df["Stemming (Design)"] = df["Stemming (Design)"].fillna(df["Stemming (Actual)"])
+            
+            after_fill = df["Stemming (Design)"].isna().sum()
+            filled = before_fill - after_fill
+            steps_done.append(f"✅ Cross-filled Stemming (Design) with {filled} values from Stemming (Actual)")
+        else:
+            steps_done.append("⚠️ Stemming columns not found")
+
+        # STEP 7 – Clean column 'Asset' (keep only numbers and fill empty with most repeated)
         # Supports "Asset" or "Asset." or "Asset (R)" etc.
         asset_col = None
         for c in df.columns:
@@ -216,6 +234,9 @@ if uploaded_files:
                 break
 
         if asset_col:
+            # Replace "-" with NaN
+            df[asset_col] = df[asset_col].replace("-", pd.NA)
+            
             before_non_numeric = df[asset_col].astype(str).apply(lambda x: bool(re.search(r"[A-Za-z]", x))).sum()
             df[asset_col] = df[asset_col].astype(str).str.extract(r"(\d+)", expand=False)
             df[asset_col] = pd.to_numeric(df[asset_col], errors="coerce")
@@ -223,6 +244,17 @@ if uploaded_files:
             steps_done.append(
                 f"✅ Cleaned column '{asset_col}' — removed {before_non_numeric} non-numeric entries, kept {after_cleaned} numeric values"
             )
+            
+            # Fill empty/NaN Asset values with most repeated asset
+            empty_count = df[asset_col].isna().sum()
+            if empty_count > 0:
+                most_common_asset = df[asset_col].mode()
+                if len(most_common_asset) > 0:
+                    most_common_value = most_common_asset.iloc[0]
+                    df[asset_col] = df[asset_col].fillna(most_common_value)
+                    steps_done.append(
+                        f"✅ Filled {empty_count} empty Asset values with most repeated asset: {most_common_value}"
+                    )
         else:
             steps_done.append("⚠️ Column 'Asset' not found")
 
@@ -316,5 +348,8 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
+
+
 
 
