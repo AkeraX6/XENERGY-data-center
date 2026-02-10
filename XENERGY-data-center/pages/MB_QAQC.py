@@ -207,21 +207,27 @@ if uploaded_files:
         else:
             steps_done.append("⚠️ Explosive columns not found")
 
-        # STEP 6.5 – Cross-fill Stemming
+        # STEP 6.5 – Cross-fill Stemming (bidirectional)
         if "Stemming (Design)" in df.columns and "Stemming (Actual)" in df.columns:
-            # Replace "-" with NaN for proper handling
-            df["Stemming (Design)"] = df["Stemming (Design)"].replace("-", pd.NA)
-            df["Stemming (Actual)"] = df["Stemming (Actual)"].replace("-", pd.NA)
+            # Replace "-", "None", and empty strings with NaN for proper handling
+            df["Stemming (Design)"] = df["Stemming (Design)"].replace(["-", "None", ""], pd.NA)
+            df["Stemming (Actual)"] = df["Stemming (Actual)"].replace(["-", "None", ""], pd.NA)
             
-            # Count how many will be filled
-            before_fill = df["Stemming (Design)"].isna().sum()
+            # Convert to numeric if needed
+            df["Stemming (Design)"] = pd.to_numeric(df["Stemming (Design)"], errors="coerce")
+            df["Stemming (Actual)"] = pd.to_numeric(df["Stemming (Actual)"], errors="coerce")
             
-            # Cross-fill: Design from Actual
+            # Count how many will be filled in each direction
+            design_empty_before = df["Stemming (Design)"].isna().sum()
+            actual_empty_before = df["Stemming (Actual)"].isna().sum()
+            
+            # Cross-fill: bidirectional
             df["Stemming (Design)"] = df["Stemming (Design)"].fillna(df["Stemming (Actual)"])
+            df["Stemming (Actual)"] = df["Stemming (Actual)"].fillna(df["Stemming (Design)"])
             
-            after_fill = df["Stemming (Design)"].isna().sum()
-            filled = before_fill - after_fill
-            steps_done.append(f"✅ Cross-filled Stemming (Design) with {filled} values from Stemming (Actual)")
+            design_filled = design_empty_before - df["Stemming (Design)"].isna().sum()
+            actual_filled = actual_empty_before - df["Stemming (Actual)"].isna().sum()
+            steps_done.append(f"✅ Cross-filled Stemming: Design←Actual ({design_filled} values), Actual←Design ({actual_filled} values)")
         else:
             steps_done.append("⚠️ Stemming columns not found")
 
@@ -348,8 +354,6 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
-
-
 
 
 
