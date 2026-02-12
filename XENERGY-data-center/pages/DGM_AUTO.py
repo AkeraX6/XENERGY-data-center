@@ -23,9 +23,55 @@ if st.button("⬅️ Back to Menu", key="back_dgmauto"):
 # ==========================================================
 # FILE UPLOAD
 # ==========================================================
-uploaded_file = st.file_uploader("📤 Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
+st.subheader("📁 Upload Files")
 
-if uploaded_file is not None:
+col_upload1, col_upload2 = st.columns(2)
+
+with col_upload1:
+    operators_file = st.file_uploader("📋 Upload Operators File (Excel/CSV)", type=["xlsx", "xls", "csv"], key="operators_upload", help="Required: File with Name/Operador and Code/Codigo columns")
+
+with col_upload2:
+    uploaded_file = st.file_uploader("📤 Upload Data File (Excel/CSV)", type=["xlsx", "xls", "csv"], key="data_upload")
+
+# ==========================================================
+# LOAD OPERATORS FROM FILE (REQUIRED)
+# ==========================================================
+_operator_names = {}
+
+if operators_file is not None:
+    try:
+        op_file_name = operators_file.name.lower()
+        if op_file_name.endswith(".csv"):
+            operators_df = pd.read_csv(operators_file)
+        else:
+            operators_df = pd.read_excel(operators_file)
+        
+        # Expect columns: Name (or Operador), Code (or Codigo)
+        name_col = None
+        code_col = None
+        
+        for col in operators_df.columns:
+            col_lower = col.lower().strip()
+            if "name" in col_lower or "operador" in col_lower or "nombre" in col_lower:
+                name_col = col
+            if "code" in col_lower or "codigo" in col_lower or "cod" in col_lower:
+                code_col = col
+        
+        if name_col and code_col:
+            for _, row in operators_df.iterrows():
+                if pd.notna(row[name_col]) and pd.notna(row[code_col]):
+                    _operator_names[str(row[name_col]).strip()] = int(row[code_col])
+            st.success(f"✅ Loaded {len(_operator_names)} operators from file.")
+        else:
+            st.error("❌ Operators file must have Name/Operador and Code/Codigo columns.")
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ Error reading operators file: {e}")
+        st.stop()
+else:
+    st.warning("⚠️ Please upload an Operators file to continue.")
+
+if uploaded_file is not None and _operator_names:
     file_name = uploaded_file.name.lower()
     if file_name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
@@ -66,18 +112,7 @@ if uploaded_file is not None:
         def _nospace(s: str) -> str:
             return s.replace(" ", "")
 
-        # ---------- Operator Mapping ----------
-        _operator_names = {
-            "Alberto Flores": 1, "Alex Nunez": 2, "Carla Vargas": 3, "Carlos Bugueno": 4, "Carlos Medina": 5,
-            "Cristian Herrera": 6, "Francisco Pasten": 7, "Freddy Pena": 8, "German Leyton": 9, "German Vidal": 10,
-            "Hugo Garcia": 11, "Jhonny Dubo": 12, "Jose Perez": 13, "Juan Gonzalez": 14, "Leonardo Ramirez": 15,
-            "Miguel Guamparito": 16, "Oscar Arancibia": 17, "Pamela Ruiz": 18, "Patricio Plaza": 19, "Renan Bugueno": 20,
-            "Rodrigo Cataldo": 21, "Sergio Gutierrez": 22, "Trepsa": 23, "Victor Rojas Chavez": 24,
-            "Hernan Munoz": 26, "Jose Vallejos": 27, "Jose Villegas": 28, "Marcelo Villegas": 29, "Fabian Gallardo": 30,
-            "Humberto Meneses": 32, "Mario Maya": 33, "Mario Rivera": 34, "Mauricio Villegas": 35,
-            "Fabian Guerrero": 36, "Ricardo Ortiz": 37,
-        }
-
+        # ---------- Operator Index (built from loaded _operator_names) ----------
         _ops_index = []
         for full_name, code in _operator_names.items():
             norm_ws = _norm_ws(full_name)
@@ -360,11 +395,43 @@ if uploaded_file is not None:
             use_container_width=True
         )
 
+    # ==========================================================
+    # DOWNLOAD UPDATED OPERATORS FILE (if new operators found)
+    # ==========================================================
+    if new_operators:
+        st.markdown("---")
+        st.subheader("👥 Download Updated Operators File")
+        st.info(f"📋 {len(new_operators)} new operator(s) were added during processing.")
+        
+        # Create updated operators dataframe
+        updated_ops_data = {"Operador": [], "Codigo": []}
+        for name, code in _operator_names.items():
+            updated_ops_data["Operador"].append(name)
+            updated_ops_data["Codigo"].append(code)
+        
+        updated_ops_df = pd.DataFrame(updated_ops_data)
+        updated_ops_df = updated_ops_df.sort_values("Codigo").reset_index(drop=True)
+        
+        # Prepare Excel buffer for operators
+        ops_excel_buffer = io.BytesIO()
+        updated_ops_df.to_excel(ops_excel_buffer, index=False, engine="openpyxl")
+        ops_excel_buffer.seek(0)
+        
+        st.download_button(
+            "👥 Download Updated Operators (Excel)",
+            ops_excel_buffer,
+            file_name="DGM_Operators_Updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
     st.markdown("<hr>", unsafe_allow_html=True)
     st.caption("Built by Maxam - Omar El Kendi -")
 
 else:
     st.info("📂 Please upload a file to begin.")
+
+
 
 
 
