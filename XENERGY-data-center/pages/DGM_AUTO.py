@@ -204,12 +204,19 @@ if uploaded_file is not None and _operator_names:
             return value
 
         # ---------- Expansion & Nivel ----------
-        def extract_xpansion_nivel(text):
+        def extract_expansion_nivel(text):
             if pd.isna(text):
                 return None, None
             text = str(text).upper()
-            xp_match = re.search(r"F0*(\d+)", text)
-            xpansion = int(xp_match.group(1)) if xp_match else None
+            # Check for F##W pattern (e.g., F12W → 120)
+            xp_match_w = re.search(r"F0*(\d+)W", text)
+            if xp_match_w:
+                expansion = int(xp_match_w.group(1)) * 10  # F12W → 120
+            else:
+                # Standard F## pattern (e.g., F12 → 12)
+                xp_match = re.search(r"F0*(\d+)", text)
+                expansion = int(xp_match.group(1)) if xp_match else None
+            
             nivel = None
             nv_match = re.search(r"B0*(\d{3,4})", text)
             if nv_match:
@@ -218,7 +225,7 @@ if uploaded_file is not None and _operator_names:
                 nv_match = re.search(r"[_\-](2\d{3}|3\d{3}|4\d{3})[_\-]", text)
                 if nv_match:
                     nivel = int(nv_match.group(1))
-            return xpansion, nivel
+            return expansion, nivel
 
         # ---------- Perforadora ----------
         def clean_perforadora(value):
@@ -290,11 +297,11 @@ if uploaded_file is not None and _operator_names:
                 st.info("✅ No new operators found — all matched existing records.")
 
         if "Banco" in df.columns:
-            xpansions, nivels = zip(*df["Banco"].apply(extract_xpansion_nivel))
+            expansions, nivels = zip(*df["Banco"].apply(extract_expansion_nivel))
             insert_idx = df.columns.get_loc("Banco") + 1
-            df.insert(insert_idx, "Xpansion", xpansions)
+            df.insert(insert_idx, "Expansion", expansions)
             df.insert(insert_idx + 1, "Nivel", nivels)
-            steps_done.append("✅ Extracted Xpansion and Nivel columns from Banco.")
+            steps_done.append("✅ Extracted Expansion and Nivel columns from Banco.")
 
         if "Perforadora" in df.columns:
             df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
@@ -359,9 +366,6 @@ if uploaded_file is not None and _operator_names:
     export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
-    csv_buffer = io.StringIO()
-    export_df.to_csv(csv_buffer, index=False, sep=";")
-
     # TXT export with specific columns in order
     txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
     txt_available_cols = [col for col in txt_columns if col in df.columns]
@@ -375,7 +379,7 @@ if uploaded_file is not None and _operator_names:
     txt_buffer = io.StringIO()
     txt_df.to_csv(txt_buffer, index=False, sep="\t")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             "📘 Download Excel File",
@@ -385,14 +389,6 @@ if uploaded_file is not None and _operator_names:
             use_container_width=True
         )
     with col2:
-        st.download_button(
-            "📗 Download CSV File",
-            csv_buffer.getvalue(),
-            file_name="DGM_Autonomia_Cleaned.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-    with col3:
         st.download_button(
             "📄 Download TXT File",
             txt_buffer.getvalue(),
@@ -436,8 +432,6 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
-
 
 
 
