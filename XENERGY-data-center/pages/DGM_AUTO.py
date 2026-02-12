@@ -247,46 +247,67 @@ if uploaded_file is not None and _operator_names:
                 return 4
             return value
 
-        # ---------- Pair Cleaning ----------
-        def clean_pair(df, col1, col2):
-            def replace_vals(a, b):
-                try:
-                    a = float(a)
-                    if a == 0:  # Treat 0 as empty for coordinates
-                        a = None
-                except:
-                    a = None
-                try:
-                    b = float(b)
-                    if b == 0:  # Treat 0 as empty for coordinates
-                        b = None
-                except:
-                    b = None
-                
-                # Cross-fill: if one is empty, use the other
-                if a is None and b is not None:
-                    a = b
-                if b is None and a is not None:
-                    b = a
-                return a, b
-
-            new1, new2 = zip(*[replace_vals(a, b) for a, b in zip(df[col1], df[col2])])
-            df[col1], df[col2] = new1, new2
-            # Remove rows where both columns are still empty after cross-filling
-            df = df.dropna(subset=[col1, col2], how="all")
-            return df
-
-        # ---------- Find matching column pairs ----------
-        def find_matching_columns(df, plan_col, real_variations):
-            """Find the best matching Real column for a Plan column"""
-            if plan_col not in df.columns:
-                return None, None
+        # ---------- Cross-fill Plan/Real columns ----------
+        def crossfill_columns(df, plan_names, real_names):
+            """
+            Cross-fill between Plan and Real columns.
+            - If Plan is empty, copy from Real
+            - If Real is empty, copy from Plan  
+            - If both are empty, mark for deletion
+            Returns: (df, plan_col_used, real_col_used) or (df, None, None) if not found
+            """
+            # Find the actual Plan column name in the dataframe
+            plan_col = None
+            for name in plan_names:
+                if name in df.columns:
+                    plan_col = name
+                    break
             
-            # Try each variation of the Real column name
-            for real_col in real_variations:
-                if real_col in df.columns:
-                    return plan_col, real_col
-            return None, None
+            # Find the actual Real column name in the dataframe
+            real_col = None
+            for name in real_names:
+                if name in df.columns:
+                    real_col = name
+                    break
+            
+            if plan_col is None or real_col is None:
+                return df, None, None
+            
+            # Cross-fill row by row
+            rows_to_delete = []
+            for idx in df.index:
+                plan_val = df.at[idx, plan_col]
+                real_val = df.at[idx, real_col]
+                
+                # Check if Plan is empty/invalid
+                plan_empty = pd.isna(plan_val) or str(plan_val).strip() == "" or str(plan_val).strip() == "-"
+                try:
+                    if float(plan_val) == 0:
+                        plan_empty = True
+                except:
+                    pass
+                
+                # Check if Real is empty/invalid
+                real_empty = pd.isna(real_val) or str(real_val).strip() == "" or str(real_val).strip() == "-"
+                try:
+                    if float(real_val) == 0:
+                        real_empty = True
+                except:
+                    pass
+                
+                # Cross-fill logic
+                if plan_empty and not real_empty:
+                    df.at[idx, plan_col] = real_val  # Copy Real to Plan
+                elif real_empty and not plan_empty:
+                    df.at[idx, real_col] = plan_val  # Copy Plan to Real
+                elif plan_empty and real_empty:
+                    rows_to_delete.append(idx)  # Both empty, mark for deletion
+            
+            # Delete rows where both are empty
+            if rows_to_delete:
+                df = df.drop(rows_to_delete)
+            
+            return df, plan_col, real_col
 
         # ---------- Cleaning Starts ----------
         df = df.loc[:, ~df.columns.duplicated()]
@@ -326,24 +347,27 @@ if uploaded_file is not None and _operator_names:
             df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
             steps_done.append("✅ Standardized Perforadora names and numeric codes.")
 
-        pairs = [
-            ("Este Plan", ["Este.Real", "Este Real"]),
-            ("Norte Plan", ["Norte.Real", "Norte Real"]),
-            ("Elev Plan", ["Elev.Real", "Elev Real"]),
-            ("Profundidad Objetivo", ["Profundidad.Real", "Profundidad Real"]),
-        ]
-        count_pairs = 0
+        # ---------- Cross-fill Este, Norte, Elev columns ----------
         rows_before = len(df)
+        crossfill_pairs = [
+            (["Este Plan", "Este.Plan"], ["Este Real", "Este.Real"]),
+            (["Norte Plan", "Norte.Plan"], ["Norte Real", "Norte.Real"]),
+            (["Elev Plan", "Elev.Plan"], ["Elev Real", "Elev.Real"]),
+        ]
         
-        for plan_col, real_variations in pairs:
-            plan_found, real_found = find_matching_columns(df, plan_col, real_variations)
-            if plan_found and real_found:
-                df = clean_pair(df, plan_found, real_found)
-                count_pairs += 1
+        pairs_processed = []
+        for plan_names, real_names in crossfill_pairs:
+            df, plan_used, real_used = crossfill_columns(df, plan_names, real_names)
+            if plan_used and real_used:
+                pairs_processed.append(f"{plan_used} ↔ {real_used}")
         
         rows_after = len(df)
         rows_deleted = rows_before - rows_after
-        steps_done.append(f"✅ Cross-filled {count_pairs} Plan/Real column pairs. Deleted {rows_deleted} rows with empty coordinates.")
+        
+        if pairs_processed:
+            steps_done.append(f"✅ Cross-filled: {', '.join(pairs_processed)}. Deleted {rows_deleted} rows with empty coordinates.")
+        else:
+            steps_done.append("⚠️ No Plan/Real column pairs found for cross-filling.")
 
         # ---------- Extract Day, Month, Year from Dia ----------
         if "Dia" in df.columns:
@@ -457,7 +481,6 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
 
 
 
