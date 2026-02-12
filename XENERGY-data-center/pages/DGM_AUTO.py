@@ -252,22 +252,41 @@ if uploaded_file is not None and _operator_names:
             def replace_vals(a, b):
                 try:
                     a = float(a)
+                    if a == 0:  # Treat 0 as empty for coordinates
+                        a = None
                 except:
                     a = None
                 try:
                     b = float(b)
+                    if b == 0:  # Treat 0 as empty for coordinates
+                        b = None
                 except:
                     b = None
-                if a is None or a <= 0:
+                
+                # Cross-fill: if one is empty, use the other
+                if a is None and b is not None:
                     a = b
-                if b is None or b <= 0:
+                if b is None and a is not None:
                     b = a
                 return a, b
 
             new1, new2 = zip(*[replace_vals(a, b) for a, b in zip(df[col1], df[col2])])
             df[col1], df[col2] = new1, new2
+            # Remove rows where both columns are still empty after cross-filling
             df = df.dropna(subset=[col1, col2], how="all")
             return df
+
+        # ---------- Find matching column pairs ----------
+        def find_matching_columns(df, plan_col, real_variations):
+            """Find the best matching Real column for a Plan column"""
+            if plan_col not in df.columns:
+                return None, None
+            
+            # Try each variation of the Real column name
+            for real_col in real_variations:
+                if real_col in df.columns:
+                    return plan_col, real_col
+            return None, None
 
         # ---------- Cleaning Starts ----------
         df = df.loc[:, ~df.columns.duplicated()]
@@ -308,17 +327,23 @@ if uploaded_file is not None and _operator_names:
             steps_done.append("✅ Standardized Perforadora names and numeric codes.")
 
         pairs = [
-            ("Este Plan", "Este Real"),
-            ("Norte Plan", "Norte Real"),
-            ("Elev Plan", "Elev Real"),
-            ("Profundidad Objetivo", "Profundidad Real"),
+            ("Este Plan", ["Este.Real", "Este Real"]),
+            ("Norte Plan", ["Norte.Real", "Norte Real"]),
+            ("Elev Plan", ["Elev.Real", "Elev Real"]),
+            ("Profundidad Objetivo", ["Profundidad.Real", "Profundidad Real"]),
         ]
         count_pairs = 0
-        for col1, col2 in pairs:
-            if col1 in df.columns and col2 in df.columns:
-                df = clean_pair(df, col1, col2)
+        rows_before = len(df)
+        
+        for plan_col, real_variations in pairs:
+            plan_found, real_found = find_matching_columns(df, plan_col, real_variations)
+            if plan_found and real_found:
+                df = clean_pair(df, plan_found, real_found)
                 count_pairs += 1
-        steps_done.append(f"✅ Cross-filled {count_pairs} Plan/Real column pairs.")
+        
+        rows_after = len(df)
+        rows_deleted = rows_before - rows_after
+        steps_done.append(f"✅ Cross-filled {count_pairs} Plan/Real column pairs. Deleted {rows_deleted} rows with empty coordinates.")
 
         # ---------- Extract Day, Month, Year from Dia ----------
         if "Dia" in df.columns:
