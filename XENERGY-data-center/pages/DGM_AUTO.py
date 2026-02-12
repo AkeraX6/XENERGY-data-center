@@ -4,7 +4,6 @@ import io
 import unicodedata
 import re
 from difflib import SequenceMatcher
-from datetime import datetime
 
 # ==========================================================
 # PAGE HEADER
@@ -13,481 +12,362 @@ st.markdown(
     "<h2 style='text-align:center;'>DGM — Autonomía Data Cleaner</h2>",
     unsafe_allow_html=True
 )
-st.markdown(
-    "<p style='text-align:center; color:gray;'>Upload your main DGM data and an Operators mapping file. "
-    "The app maps operators (fuzzy), auto-assigns IDs to new names, cleans fields, and exports.</p>",
-    unsafe_allow_html=True
-)
+st.markdown("<p style='text-align:center; color:gray;'>Automated cleaning, structuring, and export of DGM drilling data.</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# ==========================================================
-# FILE UPLOADS
-# ==========================================================
-st.subheader("📤 Upload Files")
-c1, c2 = st.columns(2)
-with c1:
-    data_file = st.file_uploader("Main DGM Data (Excel/CSV)", type=["xlsx", "xls", "csv"], key="data_file")
-with c2:
-    ops_file = st.file_uploader("Operators Mapping (Excel/CSV)", type=["xlsx", "xls", "csv"], key="ops_file")
-
-if not data_file or not ops_file:
-    st.info("Please upload **both** files to begin.")
-    st.stop()
+# 🔙 Back to Menu
+if st.button("⬅️ Back to Menu", key="back_dgmauto"):
+    st.session_state.page = "dashboard"
+    st.rerun()
 
 # ==========================================================
-# HELPERS
+# FILE UPLOAD
 # ==========================================================
-def read_any_table(uploaded):
-    """Read Excel or CSV (detect ; or ,)."""
-    name = (uploaded.name or "").lower()
-    if name.endswith(".csv"):
-        try:
-            return pd.read_csv(uploaded, sep=";", engine="python")
-        except Exception:
-            uploaded.seek(0)
-            return pd.read_csv(uploaded, engine="python")
-    return pd.read_excel(uploaded)
+uploaded_file = st.file_uploader("📤 Upload your Excel or CSV file", type=["xlsx", "xls", "csv"])
 
-def strip_accents_lower_spaces(s: str) -> str:
-    if pd.isna(s):
-        return ""
-    s = str(s).lower().strip()
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def nospace(s: str) -> str:
-    return s.replace(" ", "")
-
-def find_col_by_hints(df, *hints):
-    """Find first column whose normalized name contains any of the hints."""
-    for c in df.columns:
-        n = strip_accents_lower_spaces(c)
-        for h in hints:
-            if strip_accents_lower_spaces(h) in n:
-                return c
-    return None
-
-# ==========================================================
-# LOAD FILES
-# ==========================================================
-df = read_any_table(data_file)
-ops_df = read_any_table(ops_file)
-
-st.subheader("📄 Original Data (Before Cleaning)")
-st.dataframe(df.head(10), use_container_width=True)
-st.info(f"📏 Total rows before cleaning: {len(df)}")
-
-# Detect operator file columns
-name_col = find_col_by_hints(ops_df, "operator", "operador", "name", "nombre")
-id_col   = find_col_by_hints(ops_df, "id", "codigo", "code")
-if not name_col or not id_col:
-    st.error("❌ Could not detect Operator mapping columns. The file must include both a name and ID column.")
-    st.stop()
-
-ops_df = ops_df[[name_col, id_col]].dropna(subset=[name_col, id_col])
-ops_df[id_col] = pd.to_numeric(ops_df[id_col], errors="coerce").astype("Int64")
-ops_df = ops_df.dropna(subset=[id_col])
-
-# Build canonical index
-ops_index = []
-for _, row in ops_df.iterrows():
-    full = str(row[name_col]).strip()
-    code = int(row[id_col])
-    ws = strip_accents_lower_spaces(full)
-    ops_index.append({
-        "code": code, "full_name": full, "ws": ws, "ns": nospace(ws),
-        "tokens": ws.split(), "ntok": len(ws.split())
-    })
-
-max_existing_id = ops_df[id_col].max() if not ops_df.empty else 0
-next_code = max_existing_id + 1
-new_ops_norm_to_code = {}
-updated_ops_records = ops_df[[name_col, id_col]].copy()
-new_ops_dict = {}  # for displaying new operators
-
-# ==========================================================
-# OPERATOR MATCHING
-# ==========================================================
-def best_operator_code_assign(raw_value: str):
-    global next_code
-    if pd.isna(raw_value) or str(raw_value).strip() == "":
-        return 25, "empty→25"
-
-    s_ws = strip_accents_lower_spaces(raw_value)
-    s_ns = nospace(s_ws)
-    s_tokens = set(s_ws.split())
-
-    # 1️⃣ Exact nospace match
-    for rec in ops_index:
-        if s_ns == rec["ns"]:
-            return rec["code"], "exact-nospace"
-
-    # 2️⃣ Token coverage + similarity
-    best = None
-    for rec in ops_index:
-        have = sum(1 for t in rec["tokens"] if t in s_tokens)
-        need = 2 if rec["ntok"] >= 3 else rec["ntok"]
-        if have >= need:
-            cov = have / max(rec["ntok"], 1)
-            sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
-            score = 0.7 * cov + 0.3 * sim
-            if best is None or score > best["score"]:
-                best = {"code": rec["code"], "score": score}
-    if best and best["score"] >= 0.80:
-        return best["code"], "token-cover"
-
-    # 3️⃣ Fuzzy fallback
-    best = None
-    for rec in ops_index:
-        sim = SequenceMatcher(None, s_ns, rec["ns"]).ratio()
-        if best is None or sim > best["sim"]:
-            best = {"code": rec["code"], "sim": sim}
-    if best and best["sim"] >= 0.90:
-        return best["code"], f"fuzzy({best['sim']:.2f})"
-
-    # 4️⃣ Unknown → assign new sequential code
-    if s_ns in new_ops_norm_to_code:
-        return new_ops_norm_to_code[s_ns], "new-reuse"
-
-    new_code = next_code
-    next_code += 1
-    new_ops_norm_to_code[s_ns] = new_code
-    clean_name = str(raw_value).strip()
-    new_ops_dict[clean_name] = new_code
-    updated_ops_records.loc[len(updated_ops_records)] = {name_col: clean_name, id_col: new_code}
-
-    ops_index.append({
-        "code": new_code, "full_name": clean_name,
-        "ws": s_ws, "ns": s_ns, "tokens": s_ws.split(), "ntok": len(s_ws.split())
-    })
-    return new_code, "new-assign"
-
-# ==========================================================
-# OTHER HELPERS
-# ==========================================================
-def convert_turno(v):
-    """
-    Dia/Día -> 1
-    Noche (with typos like 'Nohce', 'Nhoce', 'Noche') -> 2
-    Empty or any other weird text -> 1 (default Dia)
-    """
-    if pd.isna(v):
-        return 1
-    val = strip_accents_lower_spaces(v)
-    if not val:
-        return 1
-    # Detect Noche even with small typos
-    if "noc" in val or "nho" in val or "noh" in val or "nche" in val:
-        return 2
-    if "dia" in val:
-        return 1
-    # Everything else -> default Dia
-    return 1
-
-def extract_expansion_level(text):
-    if pd.isna(text):
-        return None, None
-    t = str(text).upper()
-    xp = re.search(r"F0*(\d+)", t)
-    expansion = int(xp.group(1)) if xp else None
-    nivel = None
-    nv = re.search(r"B0*(\d{3,4})", t)
-    if nv:
-        nivel = int(nv.group(1))
+if uploaded_file is not None:
+    file_name = uploaded_file.name.lower()
+    if file_name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
     else:
-        nv = re.search(r"[_\-](2\d{3}|3\d{3}|4\d{3})[_\-]", t)
-        if nv:
-            nivel = int(nv.group(1))
-    return expansion, nivel
+        df = pd.read_excel(uploaded_file)
 
-def clean_perforadora(v):
-    if pd.isna(v):
-        return v
-    val = strip_accents_lower_spaces(v)
-    if val.isdigit():
-        return int(val)
-    if "pe_01" in val or "pe01" in val:
-        return 1
-    if "pe_02" in val or "pe02" in val:
-        return 2
-    if "pd_02" in val or "pd02" in val:
-        return 22
-    if "trepsa" in val:
-        return 4
-    return v
+    st.subheader("📄 Original Data (Before Cleaning)")
+    st.dataframe(df.head(10), use_container_width=True)
+    st.info(f"📏 Total rows before cleaning: {len(df)}")
 
-def cross_fill_pair(df_in, col1, col2):
-    """
-    Cross-fill numeric pair:
-    - If one side <=0 or NaN, use the other.
-    - Then drop rows where both are NaN.
-    """
-    df_local = df_in.copy()
-    if not (col1 in df_local.columns and col2 in df_local.columns):
-        return df_local, 0
+    steps_done = []
 
-    def fix(a, b):
-        a = pd.to_numeric(a, errors="coerce")
-        b = pd.to_numeric(b, errors="coerce")
-        if pd.isna(a) or a <= 0:
-            a = b
-        if pd.isna(b) or b <= 0:
-            b = a
-        return a, b
+    # ==========================================================
+    # CLEANING STEPS
+    # ==========================================================
+    with st.expander("⚙️ See Processing Steps", expanded=False):
 
-    df_local[col1], df_local[col2] = zip(*df_local[[col1, col2]].apply(lambda r: fix(r[col1], r[col2]), axis=1))
-    before = len(df_local)
-    df_local = df_local.dropna(subset=[col1, col2], how="all")
-    removed = before - len(df_local)
-    return df_local, removed
+        # ---------- Text Normalization ----------
+        def normalize_text(s):
+            if pd.isna(s):
+                return ""
+            s = str(s).strip().lower()
+            s = unicodedata.normalize("NFD", s)
+            s = s.encode("ascii", "ignore").decode("utf-8")
+            return s
 
-# ==========================================================
-# CLEANING PIPELINE
-# ==========================================================
-# Remove duplicated column names like .1, .2 ...
-df = df.loc[:, ~df.columns.duplicated()]
-df = df.loc[:, ~df.columns.str.contains(r"\.\d+$", regex=True)]
-df.columns = df.columns.astype(str).str.replace(r"[\r\n]+", " ", regex=True).str.strip()
+        def _norm_ws(text: str) -> str:
+            """Normalize: lowercase, remove accents, keep letters/spaces, collapse spaces."""
+            if pd.isna(text):
+                return ""
+            s = str(text).lower().strip()
+            s = unicodedata.normalize("NFD", s)
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # remove accents
+            s = re.sub(r"[^a-z\s]", " ", s)
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
 
-# Normalize Tiempo Perforación column name
-for c in df.columns:
-    if "tiempo" in c.lower() and "perfor" in c.lower():
-        df.rename(columns={c: "Tiempo Perforación [hrs]"}, inplace=True)
-        break
+        def _nospace(s: str) -> str:
+            return s.replace(" ", "")
 
-steps_done, deletes_log = [], {}
-total_deleted = 0
+        # ---------- Operator Mapping ----------
+        _operator_names = {
+            "Alberto Flores": 1, "Alex Nunez": 2, "Carla Vargas": 3, "Carlos Bugueno": 4, "Carlos Medina": 5,
+            "Cristian Herrera": 6, "Francisco Pasten": 7, "Freddy Pena": 8, "German Leyton": 9, "German Vidal": 10,
+            "Hugo Garcia": 11, "Jhonny Dubo": 12, "Jose Perez": 13, "Juan Gonzalez": 14, "Leonardo Ramirez": 15,
+            "Miguel Guamparito": 16, "Oscar Arancibia": 17, "Pamela Ruiz": 18, "Patricio Plaza": 19, "Renan Bugueno": 20,
+            "Rodrigo Cataldo": 21, "Sergio Gutierrez": 22, "Trepsa": 23, "Victor Rojas Chavez": 24,
+            "Hernan Munoz": 26, "Jose Vallejos": 27, "Jose Villegas": 28, "Marcelo Villegas": 29, "Fabian Gallardo": 30,
+            "Humberto Meneses": 32, "Mario Maya": 33, "Mario Rivera": 34, "Mauricio Villegas": 35,
+            "Fabian Guerrero": 36, "Ricardo Ortiz": 37,
+        }
 
-# 1️⃣ Delete rows with empty Tiempo Perforación [hrs]
-if "Tiempo Perforación [hrs]" in df.columns:
-    before = len(df)
-    df = df.dropna(subset=["Tiempo Perforación [hrs]"])
-    removed = before - len(df)
-    deletes_log["Empty 'Tiempo Perforación [hrs]'"] = removed
-    total_deleted += removed
-    steps_done.append("• Deleted rows with empty 'Tiempo Perforación [hrs]'.")
-else:
-    steps_done.append("• Column 'Tiempo Perforación [hrs]' not found (no deletion).")
+        _ops_index = []
+        for full_name, code in _operator_names.items():
+            norm_ws = _norm_ws(full_name)
+            tokens = norm_ws.split()
+            nospace = _nospace(norm_ws)
+            _ops_index.append({
+                "code": code,
+                "full_name": full_name,
+                "norm_ws": norm_ws,
+                "nospace": nospace,
+                "tokens": tokens,
+                "ntok": len(tokens),
+            })
 
-# 2️⃣ Turno conversion (Dia/Noche + defaults)
-if "Turno" in df.columns:
-    df["Turno"] = df["Turno"].apply(convert_turno)
-    steps_done.append("• Standardized Turno: Dia / Noche (typos fixed, weird/empty → 1).")
+        new_operators = {}
 
-# 3️⃣ Operator mapping (using external mapping file)
-op_col = find_col_by_hints(df, "operador", "operator")
-new_ops_added_count = 0
-if op_col:
-    codes = []
-    added = 0
-    for v in df[op_col]:
-        code, reason = best_operator_code_assign(v)
-        codes.append(code)
-        if reason == "new-assign":
-            added += 1
-    df[op_col] = codes
-    new_ops_added_count = added
-    steps_done.append("• Mapped Operators using uploaded mapping file (new ones assigned sequential IDs).")
-else:
-    steps_done.append("• Operator column not found — skipping operator mapping.")
+        # ---------- Operator Matching ----------
+        def _best_operator_match(raw_value: str):
+            """Return (code, reason) with dynamic sequential assignment for new operators."""
+            if pd.isna(raw_value) or str(raw_value).strip() == "":
+                return 25, "empty→25"
 
-# 4️⃣ Banco → Expansion & Nivel + delete invalid Banco rows
-if "Banco" in df.columns:
-    exps, nivs = zip(*df["Banco"].apply(extract_expansion_level))
-    exps = pd.Series(exps, index=df.index)
-    nivs = pd.Series(nivs, index=df.index)
+            s_ws = _norm_ws(raw_value)
+            s_ns = _nospace(s_ws)
+            s_tokens = set(s_ws.split())
 
-    insert_idx = df.columns.get_loc("Banco") + 1
-    df.insert(insert_idx, "Expansion", exps)
-    df.insert(insert_idx + 1, "Nivel", nivs)
+            # 1️⃣ Exact nospace match (accent-insensitive)
+            for rec in _ops_index:
+                if s_ns == rec["nospace"]:
+                    return rec["code"], "exact-nospace"
 
-    before = len(df)
-    mask_invalid_banco = df["Expansion"].isna() & df["Nivel"].isna()
-    df = df[~mask_invalid_banco].copy()
-    removed = before - len(df)
-    if removed > 0:
-        deletes_log["Invalid Banco (no Expansion/Nivel)"] = removed
-        total_deleted += removed
-    steps_done.append("• Extracted Expansion & Nivel from Banco and removed rows with invalid Banco.")
-else:
-    steps_done.append("• Column 'Banco' not found (no Expansion/Nivel extracted).")
+            # 2️⃣ Token coverage
+            best = None
+            for rec in _ops_index:
+                req = rec["tokens"]
+                have = sum(1 for t in req if t in s_tokens)
+                need = 2 if rec["ntok"] >= 3 else rec["ntok"]
+                if have >= need:
+                    cov = have / max(rec["ntok"], 1)
+                    sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
+                    score = 0.7 * cov + 0.3 * sim
+                    if best is None or score > best["score"]:
+                        best = {"code": rec["code"], "score": score}
 
-# 5️⃣ Perforadora mapping
-if "Perforadora" in df.columns:
-    df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
-    steps_done.append("• Standardized Perforadora (PE_01→1, PE_02→2, PD_02→22, Trepsa→4; numbers kept as-is).")
+            if best and best["score"] >= 0.80:
+                return best["code"], "token-cover"
 
-# 6️⃣ Cross-fill Este/Norte/Elev/Profundidad pairs
-# ---- Detect pair columns robustly ----
-este_plan_col   = find_col_by_hints(df, "este plan")
-este_real_col   = find_col_by_hints(df, "este real")
-norte_plan_col  = find_col_by_hints(df, "norte plan")
-norte_real_col  = find_col_by_hints(df, "norte real")
-elev_plan_col   = find_col_by_hints(df, "elev plan", "elev. plan", "elevacion plan", "elev (design)")
-elev_real_col   = find_col_by_hints(df, "elev real", "elev.real", "elev. real", "elevacion real", "elev (actual)")
-prof_obj_col    = find_col_by_hints(df, "profundidad objetivo", "porfundidad objetivo", "prof objetivo")
-prof_real_col   = find_col_by_hints(df, "profundidad real")
+            # 3️⃣ Fuzzy fallback (small typos)
+            best = None
+            for rec in _ops_index:
+                sim = SequenceMatcher(None, s_ns, rec["nospace"]).ratio()
+                if best is None or sim > best["sim"]:
+                    best = {"code": rec["code"], "sim": sim}
+            if best and best["sim"] >= 0.90:
+                return best["code"], f"fuzzy({best['sim']:.2f})"
 
-removed_total_pairs = 0
+            # 4️⃣ Unknown → create new sequential code
+            norm_name = _nospace(s_ws)
 
-# Este
-if este_plan_col and este_real_col:
-    df, removed_here = cross_fill_pair(df, este_plan_col, este_real_col)
-    removed_total_pairs += removed_here
+            # Prevent duplicates (Raul ≈ Raúl)
+            for known in new_operators.keys():
+                if SequenceMatcher(None, norm_name, _nospace(_norm_ws(known))).ratio() >= 0.95:
+                    return new_operators[known], "duplicate-new"
 
-# Norte
-if norte_plan_col and norte_real_col:
-    df, removed_here = cross_fill_pair(df, norte_plan_col, norte_real_col)
-    removed_total_pairs += removed_here
+            # Persistent counter for sequential numbering
+            if not hasattr(_best_operator_match, "next_code"):
+                _best_operator_match.next_code = max(_operator_names.values()) + 1
 
-# Elevación: cross-fill + fallback to Nivel if both empty/<=0
-if elev_plan_col and elev_real_col:
-    df, removed_here = cross_fill_pair(df, elev_plan_col, elev_real_col)
-    removed_total_pairs += removed_here
+            new_code = _best_operator_match.next_code
+            _best_operator_match.next_code += 1
 
-    if "Nivel" in df.columns:
-        df[elev_plan_col] = pd.to_numeric(df[elev_plan_col], errors="coerce")
-        df[elev_real_col] = pd.to_numeric(df[elev_real_col], errors="coerce")
-        mask_missing_elev = (
-            (df[elev_plan_col].isna() | (df[elev_plan_col] <= 0)) &
-            (df[elev_real_col].isna() | (df[elev_real_col] <= 0)) &
-            df["Nivel"].notna()
+            new_operators[raw_value] = new_code
+            _operator_names[raw_value] = new_code
+            return new_code, "new-operator"
+
+        def convert_operador(value):
+            code, _ = _best_operator_match(value)
+            return code
+
+        # ---------- Turno ----------
+        def convert_turno(value):
+            if pd.isna(value):
+                return value
+            val = str(value).strip().lower()
+            if "dia" in val or "día" in val:
+                return 1
+            elif "noche" in val:
+                return 2
+            return value
+
+        # ---------- Expansion & Nivel ----------
+        def extract_xpansion_nivel(text):
+            if pd.isna(text):
+                return None, None
+            text = str(text).upper()
+            xp_match = re.search(r"F0*(\d+)", text)
+            xpansion = int(xp_match.group(1)) if xp_match else None
+            nivel = None
+            nv_match = re.search(r"B0*(\d{3,4})", text)
+            if nv_match:
+                nivel = int(nv_match.group(1))
+            else:
+                nv_match = re.search(r"[_\-](2\d{3}|3\d{3}|4\d{3})[_\-]", text)
+                if nv_match:
+                    nivel = int(nv_match.group(1))
+            return xpansion, nivel
+
+        # ---------- Perforadora ----------
+        def clean_perforadora(value):
+            if pd.isna(value):
+                return value
+            val = normalize_text(value)
+            if val.isdigit():
+                num = int(val)
+                if 9000 <= num <= 9300:
+                    return 9273
+                return num
+            if "pe_01" in val or "pe01" in val:
+                return 1
+            if "pe_02" in val or "pe02" in val:
+                return 2
+            if "pd_02" in val or "pd02" in val:
+                return 22
+            if "trepsa" in val:
+                return 4
+            return value
+
+        # ---------- Pair Cleaning ----------
+        def clean_pair(df, col1, col2):
+            def replace_vals(a, b):
+                try:
+                    a = float(a)
+                except:
+                    a = None
+                try:
+                    b = float(b)
+                except:
+                    b = None
+                if a is None or a <= 0:
+                    a = b
+                if b is None or b <= 0:
+                    b = a
+                return a, b
+
+            new1, new2 = zip(*[replace_vals(a, b) for a, b in zip(df[col1], df[col2])])
+            df[col1], df[col2] = new1, new2
+            df = df.dropna(subset=[col1, col2], how="all")
+            return df
+
+        # ---------- Cleaning Starts ----------
+        df = df.loc[:, ~df.columns.duplicated()]
+        df = df.loc[:, ~df.columns.str.contains(r"\.1$|\.2$|\.3$", regex=True)]
+
+        df.columns = (
+            df.columns.astype(str)
+            .str.replace(r"[\r\n]+", " ", regex=True)
+            .str.replace('"', "", regex=False)
+            .str.strip()
         )
-        df.loc[mask_missing_elev, elev_plan_col] = df.loc[mask_missing_elev, "Nivel"]
-        df.loc[mask_missing_elev, elev_real_col] = df.loc[mask_missing_elev, "Nivel"]
 
-# Profundidad: cross-fill + delete both zero/empty
-if prof_obj_col and prof_real_col:
-    df, removed_here = cross_fill_pair(df, prof_obj_col, prof_real_col)
-    removed_total_pairs += removed_here
+        if "Turno" in df.columns:
+            df["Turno"] = df["Turno"].apply(convert_turno)
+            steps_done.append("✅ Turno values converted (Día→1, Noche→2).")
 
-    df[prof_obj_col] = pd.to_numeric(df[prof_obj_col], errors="coerce")
-    df[prof_real_col] = pd.to_numeric(df[prof_real_col], errors="coerce")
+        if "Operador" in df.columns:
+            df["Operador"] = df["Operador"].apply(convert_operador)
+            steps_done.append("✅ Operador names mapped and new ones assigned sequentially.")
 
-    before_prof = len(df)
-    mask_both_zero_or_na = (
-        (df[prof_obj_col].isna() | (df[prof_obj_col] == 0)) &
-        (df[prof_real_col].isna() | (df[prof_real_col] == 0))
-    )
-    df = df[~mask_both_zero_or_na].copy()
-    removed_zero = before_prof - len(df)
-    if removed_zero > 0:
-        deletes_log["Profundidad Obj/Real both 0 or empty"] = deletes_log.get("Profundidad Obj/Real both 0 or empty", 0) + removed_zero
-        total_deleted += removed_zero
+            # --- Display newly found operators
+            if new_operators:
+                st.markdown("<h4 style='color:#d97706;'>🆕 New Operators Added During Processing</h4>", unsafe_allow_html=True)
+                for name, code in new_operators.items():
+                    st.markdown(f"<b>{name}</b> → <span style='color:green;'>Code {code}</span>", unsafe_allow_html=True)
+            else:
+                st.info("✅ No new operators found — all matched existing records.")
 
-if removed_total_pairs:
-    deletes_log["Both empty Plan/Real after cross-fill"] = deletes_log.get("Both empty Plan/Real after cross-fill", 0) + removed_total_pairs
-    total_deleted += removed_total_pairs
+        if "Banco" in df.columns:
+            xpansions, nivels = zip(*df["Banco"].apply(extract_xpansion_nivel))
+            insert_idx = df.columns.get_loc("Banco") + 1
+            df.insert(insert_idx, "Xpansion", xpansions)
+            df.insert(insert_idx + 1, "Nivel", nivels)
+            steps_done.append("✅ Extracted Xpansion and Nivel columns from Banco.")
 
-steps_done.append("• Cross-filled Plan/Real pairs: Este, Norte, Elev (with Nivel fallback), Profundidad (delete if both 0/empty).")
+        if "Perforadora" in df.columns:
+            df["Perforadora"] = df["Perforadora"].apply(clean_perforadora)
+            steps_done.append("✅ Standardized Perforadora names and numeric codes.")
 
-# ==========================================================
-# PROCESSING SUMMARY
-# ==========================================================
-with st.expander("⚙️ Processing Summary", expanded=False):
+        pairs = [
+            ("Este Plan", "Este Real"),
+            ("Norte Plan", "Norte Real"),
+            ("Elev Plan", "Elev Real"),
+            ("Profundidad Objetivo", "Profundidad Real"),
+        ]
+        count_pairs = 0
+        for col1, col2 in pairs:
+            if col1 in df.columns and col2 in df.columns:
+                df = clean_pair(df, col1, col2)
+                count_pairs += 1
+        steps_done.append(f"✅ Cross-filled {count_pairs} Plan/Real column pairs.")
 
-    if new_ops_dict:
-        st.markdown("### 👥 New Operators Added")
-        for name, code in new_ops_dict.items():
-            st.markdown(f"- **{name}** → Code **{code}**")
-        st.info("🟢 You can now download the updated Operators file below.")
+        # ---------- Extract Day, Month, Year from Dia ----------
+        if "Dia" in df.columns:
+            df["Dia"] = pd.to_datetime(df["Dia"], errors="coerce")
+            df["Day"] = df["Dia"].dt.day
+            df["Month"] = df["Dia"].dt.month
+            df["Year"] = df["Dia"].dt.year
+            steps_done.append("✅ Extracted Day, Month, and Year columns from 'Dia'.")
+        else:
+            steps_done.append("⚠️ Column 'Dia' not found for date extraction.")
 
-    st.markdown("### 🛠️ Transformations Applied")
-    for s in steps_done:
-        st.markdown(
-            f"<div style='background:#eef6ff;padding:8px;border-radius:6px;margin-bottom:6px;color:#0b5394;'>{s}</div>",
-            unsafe_allow_html=True
-        )
-
-    st.markdown("### 🗑️ Rows Deleted (by rule)")
-    if deletes_log:
-        for rule, cnt in deletes_log.items():
+        for step in steps_done:
             st.markdown(
-                f"<div style='background:#fdeaea;padding:8px;border-radius:6px;margin-bottom:6px;color:#a61b1b;'>"
-                f"• {rule}: <b>{cnt}</b></div>",
+                f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
+                f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
                 unsafe_allow_html=True
             )
-        st.markdown(
-            f"<div style='background:#f0fff0;padding:10px;border-radius:8px;margin-top:6px;color:#0b6b3a;'>"
-            f"<b>Total deleted rows: {total_deleted}</b></div>",
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown("_No deletions performed._")
 
-# ==========================================================
-# SHOW FINAL DATA
-# ==========================================================
-st.markdown("---")
-st.subheader("✅ Data After Cleaning & Transformation")
-st.dataframe(df.head(20), use_container_width=True)
-st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
-
-# ==========================================================
-# DOWNLOAD CLEANED FILES
-# ==========================================================
-st.markdown("---")
-st.subheader("💾 Export Cleaned File")
-
-option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
-if option == "⬇️ Download All Columns":
-    export_df = df
-else:
-    selected = st.multiselect("Select columns:", options=list(df.columns), default=list(df.columns))
-    export_df = df[selected] if selected else df
-
-excel_buf = io.BytesIO()
-export_df.to_excel(excel_buf, index=False, engine="openpyxl")
-excel_buf.seek(0)
-
-txt_buf = io.StringIO()
-export_df.to_csv(txt_buf, index=False, sep="\t")
-
-c1, c2 = st.columns(2)
-with c1:
-    st.download_button(
-        "📘 Download Excel File",
-        excel_buf,
-        file_name="DGM_Autonomia_Cleaned.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-with c2:
-    st.download_button(
-        "📄 Download TXT File",
-        txt_buf.getvalue(),
-        file_name="DGM_Autonomia_Cleaned.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
-
-# ==========================================================
-# UPDATED OPERATORS DOWNLOAD
-# ==========================================================
-if new_ops_added_count > 0:
+    # ==========================================================
+    # AFTER CLEANING — RESULTS
+    # ==========================================================
     st.markdown("---")
-    st.subheader("👥 Updated Operators Mapping")
-    updated_ops = updated_ops_records.dropna(subset=[name_col, id_col])
-    updated_ops[id_col] = updated_ops[id_col].astype(int)
-    updated_ops["_norm"] = updated_ops[name_col].map(lambda x: nospace(strip_accents_lower_spaces(x)))
-    updated_ops = updated_ops.sort_values([id_col]).drop_duplicates("_norm", keep="first").drop(columns="_norm")
+    st.subheader("✅ Data After Cleaning & Transformation")
+    st.dataframe(df.head(15), use_container_width=True)
+    st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
 
-    ops_buf = io.BytesIO()
-    updated_ops.to_excel(ops_buf, index=False, engine="openpyxl")
-    ops_buf.seek(0)
-    today = datetime.now().strftime("%d%m%y")
+    # ==========================================================
+    # DOWNLOAD SECTION
+    # ==========================================================
+    st.markdown("---")
+    st.subheader("💾 Export Cleaned File")
 
-    st.download_button(
-        "📒 Download Updated Operators File",
-        ops_buf,
-        file_name=f"DGM_Operators_Updated_{today}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
+    if option == "⬇️ Download All Columns":
+        export_df = df
+    else:
+        selected_columns = st.multiselect(
+            "Select columns (drag to reorder):",
+            options=list(df.columns),
+            default=list(df.columns)
+        )
+        export_df = df[selected_columns] if selected_columns else df
 
-st.markdown("<hr>", unsafe_allow_html=True)
-st.caption("Built by Maxam - Omar El Kendi -")
+    excel_buffer = io.BytesIO()
+    export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+    excel_buffer.seek(0)
+
+    csv_buffer = io.StringIO()
+    export_df.to_csv(csv_buffer, index=False, sep=";")
+
+    # TXT export with specific columns in order
+    txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
+    txt_available_cols = [col for col in txt_columns if col in df.columns]
+    txt_df = df[txt_available_cols] if txt_available_cols else df
+    txt_buffer = io.StringIO()
+    txt_df.to_csv(txt_buffer, index=False, sep="\t")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.download_button(
+            "📘 Download Excel File",
+            excel_buffer,
+            file_name="DGM_Autonomia_Cleaned.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    with col2:
+        st.download_button(
+            "📗 Download CSV File",
+            csv_buffer.getvalue(),
+            file_name="DGM_Autonomia_Cleaned.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    with col3:
+        st.download_button(
+            "📄 Download TXT File",
+            txt_buffer.getvalue(),
+            file_name="DGM_Autonomia_Cleaned.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.caption("Built by Maxam - Omar El Kendi -")
+
+else:
+    st.info("📂 Please upload a file to begin.")
+
+
+
+
 
 
