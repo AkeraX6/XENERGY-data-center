@@ -181,6 +181,11 @@ with st.expander("⚙️ See Processing Steps", expanded=False):
         if pd.isna(text):
             return pd.NA
         t = str(text).upper()
+        # Check for F##W pattern (e.g., F12W → 120)
+        m_w = re.search(r"F0*(\d+)W", t)
+        if m_w:
+            return int(m_w.group(1)) * 10  # F12W → 120
+        # Standard F## pattern (e.g., F12 → 12)
         m = re.search(r"F0*(\d+)", t)
         return int(m.group(1)) if m else pd.NA
 
@@ -259,6 +264,21 @@ with st.expander("⚙️ See Processing Steps", expanded=False):
         steps_done.append(f"✅ Cleaned '{asset_col}' — converted to numeric ({max(fixed, 0)} values fixed).")
     else:
         steps_done.append("⚠️ 'Asset' column not found.")
+
+    # --- STEP 8 – Convert "-" to 0 in Water Presence column ---
+    water_col = None
+    for col in df.columns:
+        if "water" in col.lower() and "presence" in col.lower():
+            water_col = col
+            break
+    
+    if water_col:
+        before_count = (df[water_col].astype(str) == "-").sum()
+        df[water_col] = df[water_col].replace("-", 0)
+        df[water_col] = pd.to_numeric(df[water_col], errors="coerce")
+        steps_done.append(f"✅ Converted {before_count} '-' values to 0 in '{water_col}' column.")
+    else:
+        steps_done.append("⚠️ 'Water Presence' column not found.")
 
     # --- TOTAL REMOVED ---
     rows_final = len(df)
