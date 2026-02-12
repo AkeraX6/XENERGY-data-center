@@ -365,7 +365,13 @@ if uploaded_file is not None and _operator_names:
     # TXT export with specific columns in order
     txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
     txt_available_cols = [col for col in txt_columns if col in df.columns]
-    txt_df = df[txt_available_cols] if txt_available_cols else df
+    txt_df = df[txt_available_cols].copy() if txt_available_cols else df.copy()
+    
+    # Convert Day, Month, Year to integers (remove .0)
+    for col in ["Day", "Month", "Year"]:
+        if col in txt_df.columns:
+            txt_df[col] = txt_df[col].fillna(0).astype(int)
+    
     txt_buffer = io.StringIO()
     txt_df.to_csv(txt_buffer, index=False, sep="\t")
 
@@ -430,6 +436,7 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
+
 
 
 
