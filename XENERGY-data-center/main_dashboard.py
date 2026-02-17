@@ -41,17 +41,6 @@ else:
 # PAGE: DASHBOARD
 # ===============================
 def dashboard_page():
-    st.markdown(
-        """
-        <div style='text-align:center;'>
-            <h1>💥 MAXAM Data Process Center 💥</h1>
-            <p style='color:gray;'>Unified platform for data processing across mining sites</p>
-        </div>
-        <hr>
-        """,
-        unsafe_allow_html=True
-    )
-
     st.subheader("🧭 Select Processing Module")
 
     mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
@@ -118,4 +107,3 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
-
