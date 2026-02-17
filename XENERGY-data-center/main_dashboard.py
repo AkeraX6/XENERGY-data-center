@@ -30,17 +30,12 @@ if "page" not in st.session_state:
 # ===============================
 # HEADER IMAGE
 # ===============================
-image_path = r"C:\Users\oelkendi\OneDrive - MAXAM\Escritorio\Data_Process\Main Dashboard\Cover.png"
+image_path = Path(__file__).parent / "Cover.png"
 
-st.markdown(
-    f"""
-    <div style="text-align:center;">
-        <img src="file:///{image_path.replace('\\', '/')}"
-             style="width:100%; border-radius:10px; margin-bottom:10px;">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+if image_path.exists():
+    st.image(str(image_path), use_container_width=True)
+else:
+    st.warning("⚠️ Cover image not found: Cover.png")
 
 # ===============================
 # PAGE: DASHBOARD
@@ -123,3 +118,4 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
+
