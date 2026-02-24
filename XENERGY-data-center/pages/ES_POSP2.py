@@ -119,14 +119,23 @@ if uploaded_file is not None:
             df["Year"] = df[col_fecha].dt.year.astype(int)
             steps.append("✔️ FECHA split into Day / Month / Year.")
 
-            # ---------- 2) Turno: Keep as-is and duplicate ----------
-            df["Turno1"] = df[col_turno]
-            df["Turno2"] = df[col_turno]
-            steps.append("✔️ Turno duplicated into two columns.")
+            # ---------- 2) Turno: D→1, N→2, then duplicate ----------
+            turno_str = df[col_turno].astype(str).str.strip().str.upper()
+            turno_mapped = turno_str.map({"D": 1, "N": 2}).fillna(1).astype(int)
+            df["Turno1"] = turno_mapped
+            df["Turno2"] = turno_mapped
+            steps.append("✔️ Turno normalized (D→1, N→2) and duplicated into two columns.")
 
-            # ---------- 3) Pala: Keep as-is ----------
-            df["Pala"] = df[col_pala]
-            steps.append("✔️ Pala column kept.")
+            # ---------- 3) Pala: Extract numeric part (SHE0073 → 73) ----------
+            df["Pala"] = (
+                df[col_pala]
+                .astype(str)
+                .str.extract(r"(\d+)$")[0]
+                .astype(float)
+                .fillna(0)
+                .astype(int)
+            )
+            steps.append("✔️ Pala transformed to numeric (SHE0073 → 73).")
 
             # ---------- 4) Add Hour and Minute columns filled with 1000 ----------
             df["Hour"] = 1000
@@ -222,3 +231,4 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file with columns: Fecha, Turno, Pala, X, Y, Z, Pases")
+
