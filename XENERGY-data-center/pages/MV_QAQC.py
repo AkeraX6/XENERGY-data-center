@@ -70,10 +70,60 @@ if uploaded_files:
     df = pd.concat(all_dfs, ignore_index=True)
     df = normalize_columns(df)
 
-    # --- DISPLAY BEFORE DATA ---
-    st.subheader("📄 Merged Data (Before Cleaning)")
-    st.dataframe(df.head(15), use_container_width=True)
-    st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
+    # ==================================================
+    # IMMEDIATE: Drop ALL Blast-related columns FIRST
+    # ==================================================
+    blast_cols = [c for c in df.columns if "blast" in str(c).strip().lower()]
+    if blast_cols:
+        df = df.drop(columns=blast_cols)
+
+    # ==================================================
+    # IMMEDIATE: Map Pit names to numeric codes
+    # ==================================================
+    pit_col = None
+    for c in df.columns:
+        if str(c).strip().lower() == "pit":
+            pit_col = c
+            break
+    if pit_col is None:
+        for c in df.columns:
+            if "pit" in str(c).strip().lower():
+                pit_col = c
+                break
+
+    pit_rules = [
+        ("rebosadero", 950),
+        ("dumpsur", 3),
+        ("franko", 3),
+        ("celso", 6),
+        ("kuroki", 7),
+        ("llano", 4),
+        ("mantoruso", 5),
+        ("ruso", 5),
+        ("mantoverde", 1),
+        ("mv01", 1),
+        ("mv02", 10),
+        ("mv07", 2),
+    ]
+
+    def map_pit(val):
+        if pd.isna(val) or str(val).strip() == "":
+            return 0
+        key = re.sub(r"[\s._\-]+", "", str(val).strip().lower())
+        for pattern, code in pit_rules:
+            if pattern in key:
+                return code
+        return 0
+
+    if pit_col is not None:
+        df[pit_col] = df[pit_col].apply(map_pit)
+        if pit_col != "Pit":
+            df = df.rename(columns={pit_col: "Pit"})
+
+    # --- DISPLAY BEFORE DATA (collapsed) ---
+    with st.expander("📄 Data Preview (after Pit coding & Blast removal)", expanded=False):
+        st.dataframe(df.head(15), use_container_width=True)
+        st.info(f"📏 Total rows: {len(df)} (from {len(uploaded_files)} file(s))")
 
     # ==================================================
     # CLEANING STEPS
@@ -91,6 +141,8 @@ if uploaded_files:
             dash_count += mask.sum()
             df.loc[mask, col] = 0
         steps.append(f"✅ Replaced {dash_count} standalone dash values ('-') with 0 (negative numbers kept)")
+        steps.append(f"✅ Dropped Blast column(s): {blast_cols if blast_cols else 'none found'}")
+        steps.append(f"✅ Mapped Pit names to numeric codes")
 
         # ──────────────────────────────────────────────
         # STEP 2 – Clean Density: remove empty, zero, non-numeric
@@ -188,6 +240,23 @@ if uploaded_files:
             else:
                 steps.append(f"⚠️ Column '{wc}' not found")
 
+        # ──────────────────────────────────────────────
+        # STEP 8 – Select output columns (Blast already removed)
+        # ──────────────────────────────────────────────
+        output_columns = [
+            "Pit", "Bench", "Borehole",
+            "Local X (Design)", "Local Y (Design)", "Diameter (Design)",
+            "Density",
+            "Hole Length (Design)", "Hole Length (Actual)",
+            "Explosive (kg) (Design)", "Explosive (kg) (Actual)",
+            "Stemming (Design)", "Stemming (Actual)",
+            "Burden (Design)", "Spacing (Design)", "Subdrill (Design)",
+            "Water Presence", "Water level", "Asset",
+        ]
+        available = [c for c in output_columns if c in df.columns]
+        df = df[available]
+        steps.append(f"✅ Selected {len(available)} output columns")
+
         steps.append(f"✅ Final dataset: {len(df)} rows (removed {initial_count - len(df)} total)")
 
         for s in steps:
@@ -200,6 +269,11 @@ if uploaded_files:
     # ==================================================
     # RESULTS
     # ==================================================
+    # Final safety: drop any Blast-like columns that may still exist
+    blast_remaining = [c for c in df.columns if "blast" in str(c).strip().lower()]
+    if blast_remaining:
+        df = df.drop(columns=blast_remaining)
+
     st.markdown("---")
     st.subheader("✅ Data After Cleaning & Transformation")
     st.dataframe(df.head(15), use_container_width=True)
@@ -241,3 +315,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
