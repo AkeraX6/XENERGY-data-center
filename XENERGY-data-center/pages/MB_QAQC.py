@@ -95,7 +95,19 @@ if uploaded_files:
         # ──────────────────────────────────────────────
         # STEP 1b – Map Pit names to numeric codes
         # ──────────────────────────────────────────────
-        if "Pit" in df.columns:
+        # Find Pit column flexibly (could be "Pit", "PIT", or contain "pit")
+        pit_col = None
+        for c in df.columns:
+            if str(c).strip().lower() == "pit":
+                pit_col = c
+                break
+        if pit_col is None:
+            for c in df.columns:
+                if "pit" in str(c).strip().lower():
+                    pit_col = c
+                    break
+
+        if pit_col is not None:
             # Ordered list: check substring matches (first match wins)
             pit_rules = [
                 ("rebosadero", 950),
@@ -121,10 +133,13 @@ if uploaded_files:
                         return code
                 return 0
 
-            df["Pit"] = df["Pit"].apply(map_pit)
-            steps.append("✅ Mapped Pit names to numeric codes (CELSO→6, FRANKO→3, KUROKI→7, etc.)")
+            df[pit_col] = df[pit_col].apply(map_pit)
+            # Rename to standard "Pit" if needed
+            if pit_col != "Pit":
+                df = df.rename(columns={pit_col: "Pit"})
+            steps.append(f"✅ Mapped Pit names to numeric codes (col: '{pit_col}')")
         else:
-            steps.append("⚠️ Column 'Pit' not found")
+            steps.append("⚠️ Column 'Pit' not found — available: " + str(df.columns.tolist()))
 
         # ──────────────────────────────────────────────
         # STEP 2 – Clean Density: remove empty, zero, non-numeric
@@ -256,6 +271,11 @@ if uploaded_files:
     # ==================================================
     # RESULTS
     # ==================================================
+    # Final safety: drop any Blast-like columns that may still exist
+    blast_remaining = [c for c in df.columns if "blast" in str(c).strip().lower()]
+    if blast_remaining:
+        df = df.drop(columns=blast_remaining)
+
     st.markdown("---")
     st.subheader("✅ Data After Cleaning & Transformation")
     st.dataframe(df.head(15), use_container_width=True)
@@ -297,4 +317,3 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
-
