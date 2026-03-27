@@ -70,10 +70,10 @@ if uploaded_files:
     df = pd.concat(all_dfs, ignore_index=True)
     df = normalize_columns(df)
 
-    # --- DISPLAY BEFORE DATA ---
-    st.subheader("📄 Merged Data (Before Cleaning)")
-    st.dataframe(df.head(15), use_container_width=True)
-    st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
+    # --- DISPLAY BEFORE DATA (collapsed) ---
+    with st.expander("📄 Original Data (Before Cleaning)", expanded=False):
+        st.dataframe(df.head(15), use_container_width=True)
+        st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
 
     # ==================================================
     # CLEANING STEPS
@@ -297,5 +297,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
-
 
