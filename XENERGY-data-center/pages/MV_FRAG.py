@@ -197,12 +197,12 @@ if uploaded_files:
     col_malla = find_col(df, "malla")
     col_p50 = find_col(df, "p50")
     col_p80 = find_col(df, "p80")
-    col_p90 = find_col(df, "p90")
+    col_p90 = find_col(df, "p99")
 
     missing = []
     for name, col in [("Fecha", col_fecha), ("PALA/CARGADOR", col_pala),
                        ("RAJOS", col_rajos), ("P50", col_p50),
-                       ("P80", col_p80), ("P90", col_p90)]:
+                       ("P80", col_p80), ("P99", col_p90)]:
         if col is None:
             missing.append(name)
     if missing:
@@ -249,8 +249,8 @@ if uploaded_files:
         # 6. P50, P80, P90
         result["P50"] = pd.to_numeric(df[col_p50], errors="coerce")
         result["P80"] = pd.to_numeric(df[col_p80], errors="coerce")
-        result["P90"] = pd.to_numeric(df[col_p90], errors="coerce")
-        steps.append("✅ Extracted P50, P80, P90 values")
+        result["P99"] = pd.to_numeric(df[col_p90], errors="coerce")
+        steps.append("✅ Extracted P50, P80, P99 values")
 
         # Drop rows where date could not be parsed
         before = len(result)
@@ -259,7 +259,7 @@ if uploaded_files:
             steps.append(f"⚠️ Removed {before - len(result)} rows with invalid dates")
 
         # Final column order
-        result = result[["Day", "Month", "Year", "Pala", "Pit", "Banco", "Malla", "P50", "P80", "P90"]]
+        result = result[["Day", "Month", "Year", "Pala", "Pit", "Banco", "Malla", "P50", "P80", "P99"]]
 
         steps.append(f"✅ Final dataset: {len(result)} rows × {len(result.columns)} columns")
 
@@ -316,3 +316,4 @@ if uploaded_files:
 
 else:
     st.info("📄 Please upload one or more files to begin.")
+
