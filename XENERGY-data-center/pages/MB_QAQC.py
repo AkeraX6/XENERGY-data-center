@@ -71,11 +71,18 @@ if uploaded_files:
     df = normalize_columns(df)
 
     # ==================================================
+    # DEBUG: Show actual column names found
+    # ==================================================
+    st.warning(f"🔍 DEBUG — Columns found: {df.columns.tolist()}")
+
+    # ==================================================
     # IMMEDIATE: Drop ALL Blast-related columns FIRST
     # ==================================================
     blast_cols = [c for c in df.columns if "blast" in str(c).strip().lower()]
+    st.warning(f"🔍 DEBUG — Blast columns detected: {blast_cols}")
     if blast_cols:
         df = df.drop(columns=blast_cols)
+    st.warning(f"🔍 DEBUG — Columns after Blast drop: {df.columns.tolist()}")
 
     # ==================================================
     # IMMEDIATE: Map Pit names to numeric codes
@@ -90,6 +97,10 @@ if uploaded_files:
             if "pit" in str(c).strip().lower():
                 pit_col = c
                 break
+
+    st.warning(f"🔍 DEBUG — Pit column found: '{pit_col}'")
+    if pit_col is not None:
+        st.warning(f"🔍 DEBUG — Pit sample BEFORE mapping: {df[pit_col].head(5).tolist()}")
 
     pit_rules = [
         ("rebosadero", 950),
@@ -119,6 +130,7 @@ if uploaded_files:
         df[pit_col] = df[pit_col].apply(map_pit)
         if pit_col != "Pit":
             df = df.rename(columns={pit_col: "Pit"})
+        st.warning(f"🔍 DEBUG — Pit sample AFTER mapping: {df['Pit'].head(5).tolist()}")
 
     # --- DISPLAY BEFORE DATA (collapsed) ---
     with st.expander("📄 Data Preview (after Pit coding & Blast removal)", expanded=False):
@@ -316,9 +328,3 @@ if uploaded_files:
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
 
-
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.caption("Built by Maxam — Omar El Kendi")
-
-else:
-    st.info("📂 Please upload one or more Excel/CSV files to begin.")
