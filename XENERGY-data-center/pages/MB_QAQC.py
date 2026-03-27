@@ -225,9 +225,10 @@ if uploaded_files:
         # ──────────────────────────────────────────────
         # STEP 8 – Drop Blast column and select output columns
         # ──────────────────────────────────────────────
-        if "Blast" in df.columns:
-            df = df.drop(columns=["Blast"])
-            steps.append("✅ Removed 'Blast' column from output")
+        blast_cols = [c for c in df.columns if "blast" in str(c).strip().lower()]
+        if blast_cols:
+            df = df.drop(columns=blast_cols)
+            steps.append(f"✅ Removed column(s) {blast_cols} from output")
 
         output_columns = [
             "Pit", "Bench", "Borehole",
@@ -296,4 +297,5 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
 
