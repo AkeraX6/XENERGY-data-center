@@ -70,10 +70,60 @@ if uploaded_files:
     df = pd.concat(all_dfs, ignore_index=True)
     df = normalize_columns(df)
 
+    # ==================================================
+    # IMMEDIATE: Drop ALL Blast-related columns FIRST
+    # ==================================================
+    blast_cols = [c for c in df.columns if "blast" in str(c).strip().lower()]
+    if blast_cols:
+        df = df.drop(columns=blast_cols)
+
+    # ==================================================
+    # IMMEDIATE: Map Pit names to numeric codes
+    # ==================================================
+    pit_col = None
+    for c in df.columns:
+        if str(c).strip().lower() == "pit":
+            pit_col = c
+            break
+    if pit_col is None:
+        for c in df.columns:
+            if "pit" in str(c).strip().lower():
+                pit_col = c
+                break
+
+    pit_rules = [
+        ("rebosadero", 950),
+        ("dumpsur", 3),
+        ("franko", 3),
+        ("celso", 6),
+        ("kuroki", 7),
+        ("llano", 4),
+        ("mantoruso", 5),
+        ("ruso", 5),
+        ("mantoverde", 1),
+        ("mv01", 1),
+        ("mv02", 10),
+        ("mv07", 2),
+    ]
+
+    def map_pit(val):
+        if pd.isna(val) or str(val).strip() == "":
+            return 0
+        key = re.sub(r"[\s._\-]+", "", str(val).strip().lower())
+        for pattern, code in pit_rules:
+            if pattern in key:
+                return code
+        return 0
+
+    if pit_col is not None:
+        df[pit_col] = df[pit_col].apply(map_pit)
+        if pit_col != "Pit":
+            df = df.rename(columns={pit_col: "Pit"})
+
     # --- DISPLAY BEFORE DATA (collapsed) ---
-    with st.expander("📄 Original Data (Before Cleaning)", expanded=False):
+    with st.expander("📄 Data Preview (after Pit coding & Blast removal)", expanded=False):
         st.dataframe(df.head(15), use_container_width=True)
-        st.info(f"📏 Total rows before cleaning: {len(df)} (from {len(uploaded_files)} file(s))")
+        st.info(f"📏 Total rows: {len(df)} (from {len(uploaded_files)} file(s))")
 
     # ==================================================
     # CLEANING STEPS
@@ -91,55 +141,8 @@ if uploaded_files:
             dash_count += mask.sum()
             df.loc[mask, col] = 0
         steps.append(f"✅ Replaced {dash_count} standalone dash values ('-') with 0 (negative numbers kept)")
-
-        # ──────────────────────────────────────────────
-        # STEP 1b – Map Pit names to numeric codes
-        # ──────────────────────────────────────────────
-        # Find Pit column flexibly (could be "Pit", "PIT", or contain "pit")
-        pit_col = None
-        for c in df.columns:
-            if str(c).strip().lower() == "pit":
-                pit_col = c
-                break
-        if pit_col is None:
-            for c in df.columns:
-                if "pit" in str(c).strip().lower():
-                    pit_col = c
-                    break
-
-        if pit_col is not None:
-            # Ordered list: check substring matches (first match wins)
-            pit_rules = [
-                ("rebosadero", 950),
-                ("dumpsur", 3),
-                ("franko", 3),
-                ("celso", 6),
-                ("kuroki", 7),
-                ("llano", 4),
-                ("mantoruso", 5),
-                ("ruso", 5),
-                ("mantoverde", 1),
-                ("mv01", 1),
-                ("mv02", 10),
-                ("mv07", 2),
-            ]
-
-            def map_pit(val):
-                if pd.isna(val) or str(val).strip() == "":
-                    return 0
-                key = re.sub(r"[\s._\-]+", "", str(val).strip().lower())
-                for pattern, code in pit_rules:
-                    if pattern in key:
-                        return code
-                return 0
-
-            df[pit_col] = df[pit_col].apply(map_pit)
-            # Rename to standard "Pit" if needed
-            if pit_col != "Pit":
-                df = df.rename(columns={pit_col: "Pit"})
-            steps.append(f"✅ Mapped Pit names to numeric codes (col: '{pit_col}')")
-        else:
-            steps.append("⚠️ Column 'Pit' not found — available: " + str(df.columns.tolist()))
+        steps.append(f"✅ Dropped Blast column(s): {blast_cols if blast_cols else 'none found'}")
+        steps.append(f"✅ Mapped Pit names to numeric codes")
 
         # ──────────────────────────────────────────────
         # STEP 2 – Clean Density: remove empty, zero, non-numeric
@@ -238,13 +241,8 @@ if uploaded_files:
                 steps.append(f"⚠️ Column '{wc}' not found")
 
         # ──────────────────────────────────────────────
-        # STEP 8 – Drop Blast column and select output columns
+        # STEP 8 – Select output columns (Blast already removed)
         # ──────────────────────────────────────────────
-        blast_cols = [c for c in df.columns if "blast" in str(c).strip().lower()]
-        if blast_cols:
-            df = df.drop(columns=blast_cols)
-            steps.append(f"✅ Removed column(s) {blast_cols} from output")
-
         output_columns = [
             "Pit", "Bench", "Borehole",
             "Local X (Design)", "Local Y (Design)", "Diameter (Design)",
@@ -311,6 +309,13 @@ if uploaded_files:
             mime="text/plain",
             use_container_width=True,
         )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.caption("Built by Maxam — Omar El Kendi")
+
+else:
+    st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.caption("Built by Maxam — Omar El Kendi")
