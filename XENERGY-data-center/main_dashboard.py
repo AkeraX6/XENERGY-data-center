@@ -1,5 +1,6 @@
 import streamlit as st
 import importlib.util
+import sys
 from pathlib import Path
 
 # ==========================================================
@@ -125,8 +126,11 @@ def module_page():
         st.error(f"❌ The file `{module_name}` was not found in `/pages` folder.")
         return
 
-    # Load and execute selected module inline
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    # Load and execute selected module inline (force fresh load, no cache)
+    mod_key = module_name.replace(".py", "")
+    sys.modules.pop(mod_key, None)
+    sys.modules.pop(module_name, None)
+    spec = importlib.util.spec_from_file_location(mod_key, module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -137,11 +141,6 @@ if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
-
-
-
-
-
 
 
 
