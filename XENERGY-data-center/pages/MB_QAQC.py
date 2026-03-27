@@ -96,25 +96,30 @@ if uploaded_files:
         # STEP 1b – Map Pit names to numeric codes
         # ──────────────────────────────────────────────
         if "Pit" in df.columns:
-            pit_map = {
-                "celso": 6,
-                "dumpsur03": 3,
-                "franko": 3,
-                "kuroki": 7,
-                "llano": 4,
-                "mantoruso": 5,
-                "mantoverde": 1,
-                "mv01": 1,
-                "mv02": 10,
-                "mv07": 2,
-                "rebosadero": 950,
-            }
+            # Ordered list: check substring matches (first match wins)
+            pit_rules = [
+                ("rebosadero", 950),
+                ("dumpsur", 3),
+                ("franko", 3),
+                ("celso", 6),
+                ("kuroki", 7),
+                ("llano", 4),
+                ("mantoruso", 5),
+                ("ruso", 5),
+                ("mantoverde", 1),
+                ("mv01", 1),
+                ("mv02", 10),
+                ("mv07", 2),
+            ]
 
             def map_pit(val):
                 if pd.isna(val) or str(val).strip() == "":
                     return 0
                 key = re.sub(r"[\s._\-]+", "", str(val).strip().lower())
-                return pit_map.get(key, 0)
+                for pattern, code in pit_rules:
+                    if pattern in key:
+                        return code
+                return 0
 
             df["Pit"] = df["Pit"].apply(map_pit)
             steps.append("✅ Mapped Pit names to numeric codes (CELSO→6, FRANKO→3, KUROKI→7, etc.)")
@@ -218,8 +223,12 @@ if uploaded_files:
                 steps.append(f"⚠️ Column '{wc}' not found")
 
         # ──────────────────────────────────────────────
-        # STEP 8 – Select and reorder output columns
+        # STEP 8 – Drop Blast column and select output columns
         # ──────────────────────────────────────────────
+        if "Blast" in df.columns:
+            df = df.drop(columns=["Blast"])
+            steps.append("✅ Removed 'Blast' column from output")
+
         output_columns = [
             "Pit", "Bench", "Borehole",
             "Local X (Design)", "Local Y (Design)", "Diameter (Design)",
@@ -287,5 +296,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
-
 
