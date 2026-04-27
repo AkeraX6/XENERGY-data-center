@@ -65,7 +65,14 @@ if uploaded_files:
     else:
         steps_done.append("⚠️ Column 'Timestamp' not found")
 
-    # Step 3 — Keep only needed columns
+    # Step 3 — Handle empty or -1 values in Z column
+    if "Z" in df.columns and "PositionZ" in df.columns:
+        df.loc[(df["Z"].isna()) | (df["Z"] == -1), "Z"] = df.loc[(df["Z"].isna()) | (df["Z"] == -1), "PositionZ"]
+        steps_done.append("✅ Replaced empty/−1 values in Z with PositionZ data")
+    elif "Z" in df.columns:
+        steps_done.append("⚠️ Column 'PositionZ' not found for Z replacement")
+
+    # Step 4 — Keep only needed columns
     keep_cols = ["EquipmentId", "Day", "Month", "Year", "Hour", "X", "Y", "Z"]
     existing_cols = [c for c in keep_cols if c in df.columns]
     df_final = df[existing_cols]
@@ -94,8 +101,8 @@ if uploaded_files:
     df_final.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
-    csv_buffer = io.StringIO()
-    df_final.to_csv(csv_buffer, index=False)
+    txt_buffer = io.StringIO()
+    df_final.to_csv(txt_buffer, index=False, header=False, sep="\t")
 
     st.markdown("---")
     st.subheader("💾 Download Processed File")
@@ -111,10 +118,10 @@ if uploaded_files:
         )
     with col2:
         st.download_button(
-            "📗 Download CSV",
-            csv_buffer.getvalue(),
-            file_name="DGM_POSP_Result.csv",
-            mime="text/csv",
+            "📄 Download TXT",
+            txt_buffer.getvalue(),
+            file_name="DGM_POSP_Result.txt",
+            mime="text/plain",
             use_container_width=True
         )
 
