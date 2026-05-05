@@ -189,24 +189,24 @@ if uploaded_file is not None:
             if deleted > 0:
                 steps.append(f"🗑️ Rows with invalid X/Y/Z removed: {deleted}")
 
-            # Filter ranges only when values look like mine coordinates (DUMPX format)
-            if df["X"].max() > 1000:
+            # Apply coordinate range filters only for Format 1 (DUMPX/DUMPY/CENZ)
+            if col_hcarga is not None and len(df) > 0:
                 before = len(df)
                 df = df[(df["X"] > 10000) & (df["X"] < 40000)]
                 deleted = before - len(df)
                 steps.append(f"✔️ X filtered (10,000 < X < 40,000). Rows removed: {deleted}")
 
-            if df["Y"].max() > 10000:
                 before = len(df)
                 df = df[(df["Y"] > 80000) & (df["Y"] < 400000)]
                 deleted = before - len(df)
                 steps.append(f"✔️ Y filtered (80,000 < Y < 400,000). Rows removed: {deleted}")
 
-            if df["Z"].max() > 1000:
                 before = len(df)
                 df = df[(df["Z"] > 2000) & (df["Z"] < 4000)]
                 deleted = before - len(df)
                 steps.append(f"✔️ Z filtered (2,000 < Z < 4,000). Rows removed: {deleted}")
+            elif col_hcarga is None:
+                steps.append("ℹ️ Format 2 detected — X/Y/Z range filters skipped.")
 
             # ---------- Summary ----------
             total_deleted = original_rows - len(df)
@@ -241,45 +241,55 @@ if uploaded_file is not None:
 
     if st.button("▶️ Run Quality Check", use_container_width=True, key="posp_qc"):
         total_rows = len(export_df)
-        issues_found = False
-        report_lines = []
 
-        for col in export_df.columns:
-            col_issues = []
-
-            # 1) Empty / NaN
-            empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
-            if empty_count > 0:
-                col_issues.append(f"**{empty_count}** empty value(s)")
-
-            # 2) Text (letters)
-            non_empty = export_df[col].dropna().astype(str).str.strip()
-            non_empty = non_empty[non_empty != ""]
-            text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
-            text_count = int(text_mask.sum())
-            if text_count > 0:
-                col_issues.append(f"**{text_count}** cell(s) contain text/letters")
-
-            # 3) Special characters
-            special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
-            special_count = int(special_mask.sum())
-            if special_count > 0:
-                examples = non_empty[special_mask].head(3).tolist()
-                col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
-
-            if col_issues:
-                issues_found = True
-                report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
-            else:
-                report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
-
-        if not issues_found:
-            st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+        if total_rows == 0:
+            st.error("❌ No data to check — the dataset is empty after cleaning.")
         else:
-            st.warning("⚠️ Some columns have issues. Review the report below:")
+            issues_found = False
+            report_lines = []
 
-        for line in report_lines:
-            st.markdown(line)
+            for col in export_df.columns:
+                col_issues = []
+
+                # 1) Empty / NaN
+                empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+                if empty_count > 0:
+                    col_issues.append(f"**{empty_count}** empty value(s)")
+
+                # 2) Text (letters)
+                non_empty = export_df[col].dropna().astype(str).str.strip()
+                non_empty = non_empty[non_empty != ""]
+                if len(non_empty) > 0:
+                    text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+                    text_count = int(text_mask.sum())
+                else:
+                    text_count = 0
+                if text_count > 0:
+                    col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+                # 3) Special characters
+                if len(non_empty) > 0:
+                    special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
+                    special_count = int(special_mask.sum())
+                else:
+                    special_count = 0
+                if special_count > 0:
+                    examples = non_empty[special_mask].head(3).tolist()
+                    col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+                if col_issues:
+                    issues_found = True
+                    report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+                else:
+                    report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+            if not issues_found:
+                st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+            else:
+                st.warning("⚠️ Some columns have issues. Review the report below:")
+
+            for line in report_lines:
+                st.markdown(line)
 
     # ==========================================================
     # DOWNLOAD SECTION
@@ -319,3 +329,4 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
