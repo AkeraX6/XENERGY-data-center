@@ -402,23 +402,34 @@ if uploaded_files:
     st.markdown("---")
     st.subheader("💾 Export Cleaned Files")
 
-    option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
-    if option == "⬇️ Download All Columns":
-        export_df = merged_df
+    # --- Add Matrix column: Expansion == 4 → 0, else → 1 ---
+    if "Expansion" in merged_df.columns:
+        merged_df["Matrix"] = merged_df["Expansion"].apply(lambda x: 0 if x == 4 else 1)
     else:
-        selected_columns = st.multiselect(
-            "Select columns (drag to reorder):",
-            options=list(merged_df.columns),
-            default=list(merged_df.columns)
-        )
-        export_df = merged_df[selected_columns] if selected_columns else merged_df
+        merged_df["Matrix"] = 1
 
-    excel_buffer = io.BytesIO()
-    export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
-    excel_buffer.seek(0)
+    # --- TXT export: specific column order, no headers, space-separated ---
+    txt_columns = [
+        "Level", "Expansion", "Grid", "Borehole",
+        "Local X (Design)", "Local Y (Design)", "Diameter (Design)",
+        "Density", "Hole Length (Design)", "Hole Length (Actual)",
+        "Explosive (kg) (Design)", "Explosive (kg) (Actual)",
+        "Stemming (Design)", "Stemming (Actual)",
+        "Burden (Design)", "Spacing (Design)", "Subdrill (Design)",
+        "Water Presence", "Water level", "Asset", "Matrix"
+    ]
+    # Use only columns that exist in the dataframe
+    txt_cols_present = [c for c in txt_columns if c in merged_df.columns]
+    txt_df = merged_df[txt_cols_present]
 
     txt_buffer = io.StringIO()
-    export_df.to_csv(txt_buffer, index=False, sep="|")
+    txt_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
+
+    # --- Excel export: all columns with headers, blast name included ---
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+        merged_df.to_excel(writer, index=False, sheet_name="QAQC_Cleaned")
+    excel_buffer.seek(0)
 
     col1, col2 = st.columns(2)
     with col1:
