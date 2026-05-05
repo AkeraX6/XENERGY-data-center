@@ -457,6 +457,58 @@ if uploaded_files:
         excel_df.to_excel(writer, index=False, sheet_name="QAQC_Cleaned")
     excel_buffer.seek(0)
 
+    # --- Data Quality Check ---
+    st.markdown("---")
+    st.subheader("🔍 Data Quality Check")
+
+    if st.button("▶️ Run Quality Check", use_container_width=True):
+        total_rows = len(txt_df)
+        issues_found = False
+        report_lines = []
+
+        for col in txt_df.columns:
+            col_issues = []
+
+            # 1) Empty / NaN
+            empty_count = int(txt_df[col].isna().sum() + (txt_df[col].astype(str).str.strip() == "").sum())
+            if empty_count > 0:
+                col_issues.append(f"**{empty_count}** empty value(s)")
+
+            # 2) Text (non-numeric strings) — skip if column is expected text
+            non_empty = txt_df[col].dropna().astype(str).str.strip()
+            non_empty = non_empty[non_empty != ""]
+            text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+            text_count = int(text_mask.sum())
+            if text_count > 0:
+                col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+            # 3) Special characters (-, @, #, !, ?, etc.) — excluding decimal dot and minus at start
+            special_mask = non_empty.apply(
+                lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x)))  # anything not numeric
+            )
+            special_count = int(special_mask.sum())
+            if special_count > 0:
+                # show examples
+                examples = non_empty[special_mask].head(3).tolist()
+                col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+            if col_issues:
+                issues_found = True
+                report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+            else:
+                report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+        # Display report
+        if not issues_found:
+            st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+        else:
+            st.warning("⚠️ Some columns have issues. Review the report below:")
+
+        for line in report_lines:
+            st.markdown(line)
+
+    st.markdown("---")
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
