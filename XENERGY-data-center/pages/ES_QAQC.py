@@ -402,13 +402,37 @@ if uploaded_files:
     st.markdown("---")
     st.subheader("💾 Export Cleaned Files")
 
+    # --- Density correction: scale values that were stored without decimal ---
+    if "Density" in merged_df.columns:
+        def fix_density(v):
+            try:
+                v = float(v)
+            except (ValueError, TypeError):
+                return v
+            if 100 <= v <= 200:
+                return v / 100
+            if 10 <= v <= 99:
+                return v / 10
+            if 2 < v <= 9:
+                return v / 10
+            return v
+        merged_df["Density"] = merged_df["Density"].apply(fix_density)
+
+    # --- Remove trailing .0 from whole numbers across all numeric columns ---
+    for col in merged_df.columns:
+        if pd.api.types.is_float_dtype(merged_df[col]):
+            mask = merged_df[col].notna() & (merged_df[col] == merged_df[col].round(0))
+            merged_df.loc[mask, col] = merged_df.loc[mask, col].astype(int)
+            # Keep column as object so ints stay without .0
+            merged_df[col] = merged_df[col].astype(object)
+
     # --- Add Matrix column: Expansion == 4 → 0, else → 1 ---
     if "Expansion" in merged_df.columns:
         merged_df["Matrix"] = merged_df["Expansion"].apply(lambda x: 0 if x == 4 else 1)
     else:
         merged_df["Matrix"] = 1
 
-    # --- TXT export: specific column order, no headers, space-separated ---
+    # --- Column order for exports ---
     txt_columns = [
         "Level", "Expansion", "Grid", "Borehole",
         "Local X (Design)", "Local Y (Design)", "Diameter (Design)",
@@ -418,17 +442,19 @@ if uploaded_files:
         "Burden (Design)", "Spacing (Design)", "Subdrill (Design)",
         "Water Presence", "Water level", "Asset", "Matrix"
     ]
-    # Use only columns that exist in the dataframe
     txt_cols_present = [c for c in txt_columns if c in merged_df.columns]
-    txt_df = merged_df[txt_cols_present]
 
+    # --- TXT export: no headers, space-separated ---
+    txt_df = merged_df[txt_cols_present]
     txt_buffer = io.StringIO()
     txt_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
 
-    # --- Excel export: all columns with headers, blast name included ---
+    # --- Excel export: same order as TXT but with Blast as first column ---
+    excel_columns = (["Blast"] if "Blast" in merged_df.columns else []) + txt_cols_present
+    excel_df = merged_df[excel_columns]
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-        merged_df.to_excel(writer, index=False, sheet_name="QAQC_Cleaned")
+        excel_df.to_excel(writer, index=False, sheet_name="QAQC_Cleaned")
     excel_buffer.seek(0)
 
     col1, col2 = st.columns(2)
