@@ -4,6 +4,19 @@ import io
 import re
 
 # ==========================================================
+# SMALL HELPERS
+# ==========================================================
+def normalize_name(name: str) -> str:
+    return re.sub(r"[\s_]+", "", str(name)).upper()
+
+def find_column(df, candidates):
+    norm_candidates = {normalize_name(c) for c in candidates}
+    for col in df.columns:
+        if normalize_name(col) in norm_candidates:
+            return col
+    return None
+
+# ==========================================================
 # PAGE HEADER
 # ==========================================================
 st.markdown(
@@ -11,7 +24,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(
-    "<p style='text-align:center; color:gray;'>Cleaning and structuring excavation shift data.</p>",
+    "<p style='text-align:center; color:gray;'>Cleaning and structuring excavation shift data (auto-detects input format).</p>",
     unsafe_allow_html=True
 )
 st.markdown("---")
@@ -31,7 +44,6 @@ if uploaded_file is not None:
     file_name = uploaded_file.name.lower()
 
     def read_csv_smart(file_obj):
-        """Detect delimiter automatically for CSVs."""
         sample = file_obj.read(8192).decode(errors="replace")
         file_obj.seek(0)
         try:
@@ -50,7 +62,6 @@ if uploaded_file is not None:
                 file_obj.seek(0)
                 return pd.read_csv(file_obj)
 
-    # Read file
     if file_name.endswith(".csv"):
         df = read_csv_smart(uploaded_file)
     else:
@@ -65,32 +76,37 @@ if uploaded_file is not None:
     steps_done = []
 
     # ==========================================================
-    # NORMALIZE KEY COLUMN NAMES (HORA variants, CUADRILLA)
-    # ==========================================================
-
-    # --- Find HORA column (HORA, Hora, HORA 1, HORA1, etc.) ---
-    hora_col = None
-    for c in df.columns:
-        cname = re.sub(r"\s+", "", str(c)).upper()   # remove spaces, uppercase
-        if cname.startswith("HORA"):                 # HORA, HORA1, HORA_1, etc.
-            hora_col = c
-            break
-    if hora_col and hora_col != "HORA":
-        df.rename(columns={hora_col: "HORA"}, inplace=True)
-        steps_done.append(f"ℹ️ Detected hour column '{hora_col}' and normalized name to 'HORA'.")
-    elif hora_col == "HORA":
-        steps_done.append("ℹ️ Using existing 'HORA' column as hour field.")
-    else:
-        steps_done.append("⚠️ No column matching HORA / HORA1 / HORA 1 found.")
-
-    # ==========================================================
     # CLEANING STEPS
     # ==========================================================
     with st.expander("⚙️ Processing Steps (Click to Expand)", expanded=False):
 
-        # STEP 1 – Clean TURNO (D/N → 1/2, default 1)
-        if "TURNO" in df.columns:
-            df["TURNO"] = df["TURNO"].astype(str).str.strip().str.upper()
+        # ---------- Detect key columns ----------
+        col_fecha = find_column(df, ["FECHA", "FECHA1"])
+        col_turno = find_column(df, ["TURNO"])
+        col_cuadrilla = find_column(df, ["CUADRILLA", "CUADRILL"])
+        col_hora = find_column(df, ["HORA", "HORA1", "HORA 1"])
+        col_pala = find_column(df, ["PALA", "PALA1"])
+        col_tasaexca = find_column(df, ["TASAEXCA", "TASAEXC", "TASA_EXCA"])
+        col_carg = find_column(df, ["CARG"])
+
+        # STEP 1 – FECHA → Dia, Mes, Año
+        if col_fecha is not None:
+            df[col_fecha] = pd.to_datetime(df[col_fecha], errors="coerce")
+            before = len(df)
+            df = df[df[col_fecha].notna()]
+            deleted = before - len(df)
+            total_deleted += deleted
+
+            df["Dia"] = df[col_fecha].dt.day.astype(int)
+            df["Mes"] = df[col_fecha].dt.month.astype(int)
+            df["Año"] = df[col_fecha].dt.year.astype(int)
+            steps_done.append(f"✅ FECHA: split into Dia/Mes/Año. Invalid rows removed: {deleted}")
+        else:
+            steps_done.append("⚠️ Column 'FECHA' not found — Dia/Mes/Año not created.")
+
+        # STEP 2 – TURNO
+        if col_turno is not None:
+            df[col_turno] = df[col_turno].astype(str).str.strip().str.upper()
 
             def map_turno(val):
                 if val in ["D", "1"]:
@@ -104,32 +120,38 @@ if uploaded_file is not None:
                 except Exception:
                     return 1
 
-            df["TURNO"] = df["TURNO"].apply(map_turno)
-            steps_done.append("✅ TURNO: mapped D→1, N→2, default 1 for empty/invalid values.")
+            df["TURNO"] = df[col_turno].apply(map_turno)
+            steps_done.append("✅ TURNO: mapped D→1, N→2, default 1.")
         else:
-            steps_done.append("⚠️ Column 'TURNO' not found — cannot map shifts.")
+            df["TURNO"] = 1000
+            steps_done.append("ℹ️ TURNO column not found → created and filled with 1000.")
 
-        # STEP 2 – Map CUADRILLA (A–D → 1–4)
-        cuadrilla_col = None
-        for c in df.columns:
-            if str(c).upper().startswith("CUADRILL"):
-                cuadrilla_col = c
-                break
-
-        if cuadrilla_col:
-            df[cuadrilla_col] = df[cuadrilla_col].astype(str).str.strip().str.upper()
+        # STEP 3 – CUADRILLA
+        if col_cuadrilla is not None:
+            df[col_cuadrilla] = df[col_cuadrilla].astype(str).str.strip().str.upper()
             mapping_cuad = {"A": 1, "B": 2, "C": 3, "D": 4}
-            df[cuadrilla_col] = df[cuadrilla_col].replace(mapping_cuad)
-            df.rename(columns={cuadrilla_col: "CUADRILLA"}, inplace=True)
-            steps_done.append("✅ CUADRILLA: mapped A→1, B→2, C→3, D→4.")
+            df["CUADRILLA"] = df[col_cuadrilla].replace(mapping_cuad)
+            # Try to convert to numeric; rows that can't map stay as-is
+            df["CUADRILLA"] = pd.to_numeric(df["CUADRILLA"], errors="coerce")
+            before = len(df)
+            df = df[df["CUADRILLA"].notna()]
+            df["CUADRILLA"] = df["CUADRILLA"].astype(int)
+            deleted = before - len(df)
+            total_deleted += deleted
+            steps_done.append(f"✅ CUADRILLA: mapped A→1, B→2, C→3, D→4. Invalid rows removed: {deleted}")
         else:
-            steps_done.append("⚠️ CUADRILLA column not found.")
+            df["CUADRILLA"] = 1000
+            steps_done.append("ℹ️ CUADRILLA column not found → created and filled with 1000.")
 
-        # STEP 3 – Clean HORA and create HoraReal
-        if "HORA" in df.columns:
+        # STEP 4 – HORA & HoraReal
+        if col_hora is not None:
+            if col_hora != "HORA":
+                df.rename(columns={col_hora: "HORA"}, inplace=True)
+                steps_done.append(f"ℹ️ Detected hour column '{col_hora}' → renamed to 'HORA'.")
+
             before = len(df)
             df["HORA"] = pd.to_numeric(df["HORA"], errors="coerce")
-            df = df[df["HORA"].notna()]  # delete rows with empty/invalid HORA
+            df = df[df["HORA"].notna()]
             deleted = before - len(df)
             total_deleted += deleted
 
@@ -142,57 +164,46 @@ if uploaded_file is not None:
                     t = 1
                 if pd.isna(h):
                     return None
-                # Day shift: 0→8, 1→9, 2→10...
                 if t == 1:
                     return 8 + h
-                # Night shift: 0→20,1→21,2→22,3→23,4→0, etc.
                 return (20 + h) % 24
 
             df["HoraReal"] = df.apply(compute_hora_real, axis=1)
-            steps_done.append(
-                f"✅ HORA / HoraReal: removed {deleted} rows with empty/invalid HORA and computed HoraReal using TURNO."
-            )
+            steps_done.append(f"✅ HORA/HoraReal: removed {deleted} invalid rows, computed HoraReal from TURNO.")
         else:
-            steps_done.append("⚠️ No usable HORA column found — HoraReal not created.")
+            df["HORA"] = 1000
+            df["HoraReal"] = 1000
+            steps_done.append("ℹ️ HORA column not found → HORA and HoraReal filled with 1000.")
 
-        # STEP 4 – Clean PALA (keep numeric suffix only)
-        if "PALA" in df.columns:
-            df["PALA"] = df["PALA"].astype(str).str.extract(r"(\d+)", expand=False)
+        # STEP 5 – PALA (might be PALA1)
+        if col_pala is not None:
+            df["PALA"] = df[col_pala].astype(str).str.extract(r"(\d+)", expand=False)
             df["PALA"] = pd.to_numeric(df["PALA"], errors="coerce")
-            steps_done.append("✅ PALA: extracted numeric suffix (e.g. SHE0097 → 97).")
+            steps_done.append(f"✅ PALA (from '{col_pala}'): extracted numeric suffix (SHE0097 → 97).")
         else:
-            steps_done.append("⚠️ Column 'PALA' not found.")
+            steps_done.append("⚠️ Column 'PALA'/'PALA1' not found.")
 
-        # STEP 5 – Filter TASAEXCA (0, empty, >300000 → delete)
-        if "TASAEXCA" in df.columns:
+        # STEP 6 – Filter TASAEXCA (0, empty, >300000 → delete)
+        if col_tasaexca is not None:
+            if col_tasaexca != "TASAEXCA":
+                df.rename(columns={col_tasaexca: "TASAEXCA"}, inplace=True)
+
             before = len(df)
             df["TASAEXCA"] = pd.to_numeric(df["TASAEXCA"], errors="coerce")
             df = df[df["TASAEXCA"].notna()]
             df = df[(df["TASAEXCA"] > 0) & (df["TASAEXCA"] <= 300000)]
             deleted = before - len(df)
             total_deleted += deleted
-            steps_done.append(
-                f"✅ TASAEXCA: removed {deleted} rows (empty, 0, or >300000)."
-            )
+            steps_done.append(f"✅ TASAEXCA: removed {deleted} rows (empty, 0, or >300000).")
         else:
             steps_done.append("⚠️ Column 'TASAEXCA' not found — no filter applied.")
 
-        # STEP 6 – Split FECHA into Dia, Mes, Año
-        if "FECHA" in df.columns:
-            before = len(df)
-            df["FECHA_dt"] = pd.to_datetime(df["FECHA"], errors="coerce")
-            df = df[df["FECHA_dt"].notna()]
-            deleted = before - len(df)
-            total_deleted += deleted
-
-            df["Dia"] = df["FECHA_dt"].dt.day
-            df["Mes"] = df["FECHA_dt"].dt.month
-            df["Año"] = df["FECHA_dt"].dt.year
-            steps_done.append(
-                f"✅ FECHA: converted to date, removed {deleted} invalid rows, and created Dia/Mes/Año."
-            )
+        # STEP 7 – CARG
+        if col_carg is not None:
+            df["CARG"] = pd.to_numeric(df[col_carg], errors="coerce")
+            steps_done.append("✅ CARG: kept as numeric.")
         else:
-            steps_done.append("⚠️ Column 'FECHA' not found — Dia/Mes/Año not created.")
+            steps_done.append("⚠️ Column 'CARG' not found.")
 
         # --- Show all step messages ---
         for step in steps_done:
@@ -202,7 +213,6 @@ if uploaded_file is not None:
                 unsafe_allow_html=True
             )
 
-        # Total deleted summary
         final_rows = len(df)
         total_deleted_summary = original_rows - final_rows
         st.markdown(
@@ -214,34 +224,73 @@ if uploaded_file is not None:
         )
 
     # ==========================================================
-    # SELECT & ORDER OUTPUT COLUMNS
+    # OUTPUT
     # ==========================================================
     st.markdown("---")
-    st.subheader("✅ Data After Cleaning & Transformation")
-    st.dataframe(df.head(20), use_container_width=True)
-    st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
+    st.subheader("✅ Cleaned Data Preview")
 
+    output_cols = ["Dia", "Mes", "Año", "TURNO", "CUADRILLA", "HORA", "HoraReal", "PALA", "TASAEXCA", "CARG"]
+    existing_output_cols = [c for c in output_cols if c in df.columns]
+    export_df = df[existing_output_cols].copy()
+
+    st.dataframe(export_df.head(20), use_container_width=True)
+    st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns.")
+
+    # ==========================================================
+    # DATA QUALITY CHECK
+    # ==========================================================
     st.markdown("---")
-    st.subheader("📌 Choose Output Columns & Order")
+    st.subheader("🔍 Data Quality Check")
 
-    # Desired default order
-    desired_cols = [
-        "Dia", "Mes", "Año",
-        "TURNO", "CUADRILLA",
-        "HORA", "HoraReal",
-        "PALA",
-        "TASAEXCA",
-        "COLA", "ACULA", "CARG"
-    ]
-    existing_defaults = [c for c in desired_cols if c in df.columns]
+    if st.button("▶️ Run Quality Check", use_container_width=True, key="exca_qc"):
+        total_rows = len(export_df)
 
-    selected_columns = st.multiselect(
-        "Select columns for export (drag to reorder):",
-        options=list(df.columns),
-        default=existing_defaults
-    )
+        if total_rows == 0:
+            st.error("❌ No data to check — the dataset is empty after cleaning.")
+        else:
+            issues_found = False
+            report_lines = []
 
-    export_df = df[selected_columns] if selected_columns else df
+            for col in export_df.columns:
+                col_issues = []
+
+                empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+                if empty_count > 0:
+                    col_issues.append(f"**{empty_count}** empty value(s)")
+
+                non_empty = export_df[col].dropna().astype(str).str.strip()
+                non_empty = non_empty[non_empty != ""]
+
+                if len(non_empty) > 0:
+                    text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+                    text_count = int(text_mask.sum())
+                else:
+                    text_count = 0
+                if text_count > 0:
+                    col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+                if len(non_empty) > 0:
+                    special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
+                    special_count = int(special_mask.sum())
+                else:
+                    special_count = 0
+                if special_count > 0:
+                    examples = non_empty[special_mask].head(3).tolist()
+                    col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+                if col_issues:
+                    issues_found = True
+                    report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+                else:
+                    report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+            if not issues_found:
+                st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+            else:
+                st.warning("⚠️ Some columns have issues. Review the report below:")
+
+            for line in report_lines:
+                st.markdown(line)
 
     # ==========================================================
     # DOWNLOAD SECTION
@@ -249,14 +298,14 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("💾 Export Cleaned File")
 
-    # Excel
+    # Excel (with headers)
     excel_buffer = io.BytesIO()
     export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
-    # TXT (semicolon-separated)
+    # TXT (space-separated, no headers)
     txt_buffer = io.StringIO()
-    export_df.to_csv(txt_buffer, index=False, sep=";")
+    export_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -269,7 +318,7 @@ if uploaded_file is not None:
         )
     with col2:
         st.download_button(
-            "📄 Download TXT",
+            "📄 Download TXT (no headers)",
             txt_buffer.getvalue(),
             file_name="Escondida_EXCA_Cleaned.txt",
             mime="text/plain",
