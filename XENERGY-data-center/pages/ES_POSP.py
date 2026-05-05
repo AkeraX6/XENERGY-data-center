@@ -26,7 +26,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<p style='text-align:center; color:gray;'>Limpieza y transformación de datos de posición de palas.</p>",
+    "<p style='text-align:center; color:gray;'>Limpieza y transformación de datos de posición de palas (auto-detects input format).</p>",
     unsafe_allow_html=True,
 )
 st.markdown("---")
@@ -74,6 +74,12 @@ if uploaded_file is not None:
     st.dataframe(df.head(10), use_container_width=True)
     st.info(f"📏 Total rows before cleaning: {len(df)}")
 
+    # ---------- Auto-detect format ----------
+    col_hcarga = find_column(df, ["H_CARGA", "HCARGA", "H CARGA"])
+    col_cuadrilla = find_column(df, ["CUADRILLA"])
+    detected_format = "Format 1 (H_CARGA present)" if col_hcarga else "Format 2 (no H_CARGA)"
+    st.info(f"🔎 Detected input: **{detected_format}**")
+
     original_rows = len(df)
     steps = []
 
@@ -82,35 +88,24 @@ if uploaded_file is not None:
     # ==========================================================
     with st.expander("⚙️ Processing Steps (Click to Expand)", expanded=False):
 
-        # ---------- Detect columns (case/space-insensitive) ----------
+        # ---------- Detect columns ----------
         col_fecha = find_column(df, ["FECHA"])
         col_turno = find_column(df, ["TURNO"])
-        col_cuadrilla = find_column(df, ["CUADRILLA"])
         col_pala = find_column(df, ["PALA"])
-        col_hcarga = find_column(df, ["H_CARGA", "HCARGA", "H CARGA"])
-        col_dumpx = find_column(df, ["DUMPX"])
-        col_dumpy = find_column(df, ["DUMPY"])
-        col_dumpz = find_column(df, ["DUMPZ", "CENZ"])
+        col_x = find_column(df, ["DUMPX", "X"])
+        col_y = find_column(df, ["DUMPY", "Y"])
+        col_z = find_column(df, ["DUMPZ", "CENZ", "Z"])
 
+        # Check minimum required columns
         missing_cols = []
-        for name, col in [
-            ("FECHA", col_fecha),
-            ("TURNO", col_turno),
-            ("CUADRILLA", col_cuadrilla),
-            ("PALA", col_pala),
-            ("H_CARGA", col_hcarga),
-            ("DUMPX", col_dumpx),
-            ("DUMPY", col_dumpy),
-            ("DUMPZ/CENZ", col_dumpz),
-        ]:
+        for name, col in [("FECHA", col_fecha), ("PALA", col_pala), ("X/DUMPX", col_x), ("Y/DUMPY", col_y), ("Z/DUMPZ/CENZ", col_z)]:
             if col is None:
                 missing_cols.append(name)
 
         if missing_cols:
             st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
         else:
-            # ---------- 1) Split FECHA into Dia / Mes / Año ----------
-            # Assumes FECHA is a valid date or string convertible to date
+            # ---------- 1) FECHA → Dia / Mes / Año ----------
             df[col_fecha] = pd.to_datetime(df[col_fecha], errors="coerce")
             before = len(df)
             df = df[df[col_fecha].notna()]
@@ -123,30 +118,38 @@ if uploaded_file is not None:
             df["Año"] = df[col_fecha].dt.year.astype(int)
             steps.append("✔️ FECHA split into Dia / Mes / Año.")
 
-            # ---------- 2) Turno: D→1, N→2, default 1 ----------
-            before = len(df)
-            turno_str = df[col_turno].astype(str).str.strip().str.upper()
-            df["Turno"] = turno_str.map({"D": 1, "N": 2}).fillna(1).astype(int)
-            steps.append("✔️ Turno normalized (D→1, N→2, empty→1). (No rows deleted here)")
+            # ---------- 2) Turno ----------
+            if col_turno is not None:
+                turno_str = df[col_turno].astype(str).str.strip().str.upper()
+                df["Turno"] = turno_str.map({"D": 1, "N": 2}).fillna(1).astype(int)
+                steps.append("✔️ Turno mapped (D→1, N→2, empty→1).")
+            else:
+                df["Turno"] = 1000
+                steps.append("ℹ️ Turno column not found → created and filled with 1000.")
 
-            # ---------- 3) Cuadrilla: A→1, B→2, C→3, D→4 ----------
-            cuadrilla_str = df[col_cuadrilla].astype(str).str.strip().str.upper()
-            df["Cuadrilla"] = cuadrilla_str.map({"A": 1, "B": 2, "C": 3, "D": 4})
-            # If something is not A–D, mark as NaN and drop those rows
+            # ---------- 3) Cuadrilla ----------
+            if col_cuadrilla is not None:
+                cuadrilla_str = df[col_cuadrilla].astype(str).str.strip().str.upper()
+                df["Cuadrilla"] = cuadrilla_str.map({"A": 1, "B": 2, "C": 3, "D": 4})
+                before = len(df)
+                df = df[df["Cuadrilla"].notna()]
+                df["Cuadrilla"] = df["Cuadrilla"].astype(int)
+                deleted = before - len(df)
+                steps.append(f"✔️ Cuadrilla mapped (A=1..D=4). Invalid rows removed: {deleted}")
+            else:
+                df["Cuadrilla"] = 1000
+                steps.append("ℹ️ Cuadrilla column not found → created and filled with 1000.")
+
+            # ---------- 4) Pala: extract numbers only ----------
             before = len(df)
-            df = df[df["Cuadrilla"].notna()]
-            df["Cuadrilla"] = df["Cuadrilla"].astype(int)
+            mask_she = df[col_pala].astype(str).str.contains(r"SHE\d+", case=False, na=False)
+            # Also accept purely numeric pala values
+            mask_numeric = df[col_pala].astype(str).str.match(r"^\d+$", na=False)
+            df = df[mask_she | mask_numeric]
             deleted = before - len(df)
-            steps.append(f"✔️ Cuadrilla mapped (A=1..D=4). Rows with invalid cuadrilla removed: {deleted}")
+            if deleted > 0:
+                steps.append(f"✔️ Pala filtered for valid patterns. Rows removed: {deleted}")
 
-            # ---------- 4) PALA: keep only SHE00XX and transform to numeric (e.g., SHE0068→68) ----------
-            before = len(df)
-            mask_she = df[col_pala].astype(str).str.contains(r"SHE00", case=False, na=False)
-            df = df[mask_she]
-            deleted = before - len(df)
-            steps.append(f"✔️ Pala filtered for SHE00XX pattern. Rows removed: {deleted}")
-
-            # Extract numeric suffix
             df["Pala"] = (
                 df[col_pala]
                 .astype(str)
@@ -155,54 +158,61 @@ if uploaded_file is not None:
                 .fillna(0)
                 .astype(int)
             )
-            steps.append("✔️ Pala transformed to numeric (SHE0067 → 67).")
+            steps.append("✔️ Pala transformed to numeric (SHE0069 → 69).")
 
-            # ---------- 5) H_CARGA → Hora / Minuto ----------
-            # Expect format like '02:31:41.0000000'
+            # ---------- 5) Hora / Minuto from H_CARGA ----------
+            if col_hcarga is not None:
+                hc = df[col_hcarga].astype(str)
+                match = hc.str.extract(r"(?P<hora>\d{1,2}):(?P<min>\d{1,2})")
+                df["Hora"] = pd.to_numeric(match["hora"], errors="coerce")
+                df["Minuto"] = pd.to_numeric(match["min"], errors="coerce")
+
+                before = len(df)
+                df = df[df["Hora"].notna() & df["Minuto"].notna()]
+                df["Hora"] = df["Hora"].astype(int)
+                df["Minuto"] = df["Minuto"].astype(int)
+                deleted = before - len(df)
+                steps.append(f"✔️ H_CARGA parsed into Hora / Minuto. Invalid rows removed: {deleted}")
+            else:
+                df["Hora"] = 1000
+                df["Minuto"] = 1000
+                steps.append("ℹ️ H_CARGA column not found → Hora and Minuto filled with 1000.")
+
+            # ---------- 6) X, Y, Z ----------
+            df["X"] = pd.to_numeric(df[col_x], errors="coerce")
+            df["Y"] = pd.to_numeric(df[col_y], errors="coerce")
+            df["Z"] = pd.to_numeric(df[col_z], errors="coerce")
+
             before = len(df)
-            hc = df[col_hcarga].astype(str)
-
-            # Parse hours/minutes with regex
-            match = hc.str.extract(r"(?P<hora>\d{1,2}):(?P<min>\d{1,2})")
-            df["Hora"] = pd.to_numeric(match["hora"], errors="coerce")
-            df["Minuto"] = pd.to_numeric(match["min"], errors="coerce")
-
-            # Drop rows where we could not parse
-            df = df[df["Hora"].notna() & df["Minuto"].notna()]
-            df["Hora"] = df["Hora"].astype(int)
-            df["Minuto"] = df["Minuto"].astype(int)
+            df = df[df["X"].notna() & df["Y"].notna() & df["Z"].notna()]
             deleted = before - len(df)
-            steps.append(f"✔️ H_CARGA parsed into Hora / Minuto. Rows with invalid time removed: {deleted}")
+            if deleted > 0:
+                steps.append(f"🗑️ Rows with invalid X/Y/Z removed: {deleted}")
 
-            # ---------- 6) DUMPX filter: keep 10,000 < X < 40,000 ----------
-            before = len(df)
-            df["X"] = pd.to_numeric(df[col_dumpx], errors="coerce")
-            df = df[df["X"].notna()]
-            df = df[(df["X"] > 10000) & (df["X"] < 40000)]
-            deleted = before - len(df)
-            steps.append(f"✔️ DUMPX filtered (10,000 < X < 40,000). Rows removed: {deleted}")
+            # Filter ranges only when values look like mine coordinates (DUMPX format)
+            if df["X"].max() > 1000:
+                before = len(df)
+                df = df[(df["X"] > 10000) & (df["X"] < 40000)]
+                deleted = before - len(df)
+                steps.append(f"✔️ X filtered (10,000 < X < 40,000). Rows removed: {deleted}")
 
-            # ---------- 7) DUMPY filter: keep 80,000 < Y < 400,000 ----------
-            before = len(df)
-            df["Y"] = pd.to_numeric(df[col_dumpy], errors="coerce")
-            df = df[df["Y"].notna()]
-            df = df[(df["Y"] > 80000) & (df["Y"] < 400000)]
-            deleted = before - len(df)
-            steps.append(f"✔️ DUMPY filtered (80,000 < Y < 400,000). Rows removed: {deleted}")
+            if df["Y"].max() > 10000:
+                before = len(df)
+                df = df[(df["Y"] > 80000) & (df["Y"] < 400000)]
+                deleted = before - len(df)
+                steps.append(f"✔️ Y filtered (80,000 < Y < 400,000). Rows removed: {deleted}")
 
-            # ---------- 8) DUMPZ / CENZ filter: keep 2,000 < Z < 4,000 ----------
-            before = len(df)
-            df["Z"] = pd.to_numeric(df[col_dumpz], errors="coerce")
-            df = df[df["Z"].notna()]
-            df = df[(df["Z"] > 2000) & (df["Z"] < 4000)]
-            deleted = before - len(df)
-            steps.append(f"✔️ Z (DUMPZ/CENZ) filtered (2,000 < Z < 4,000). Rows removed: {deleted}")
+            if df["Z"].max() > 1000:
+                before = len(df)
+                df = df[(df["Z"] > 2000) & (df["Z"] < 4000)]
+                deleted = before - len(df)
+                steps.append(f"✔️ Z filtered (2,000 < Z < 4,000). Rows removed: {deleted}")
 
-            # ---------- Summary deleted ----------
+            # ---------- Summary ----------
             total_deleted = original_rows - len(df)
             steps.append(f"📉 Total rows deleted after all filters: {total_deleted}")
 
-        # Show steps in green cards
+        # Show steps
         for step in steps:
             st.markdown(
                 f"<div style='background-color:#e8f8f0;padding:8px;border-radius:6px;margin-bottom:6px;'>"
@@ -216,7 +226,6 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("✅ Cleaned Data Preview")
 
-    # Final output in required order
     output_cols = ["Dia", "Mes", "Año", "Turno", "Cuadrilla", "Pala", "Hora", "Minuto", "X", "Y", "Z"]
     existing_output_cols = [c for c in output_cols if c in df.columns]
     export_df = df[existing_output_cols].copy()
@@ -225,31 +234,67 @@ if uploaded_file is not None:
     st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns.")
 
     # ==========================================================
+    # DATA QUALITY CHECK
+    # ==========================================================
+    st.markdown("---")
+    st.subheader("🔍 Data Quality Check")
+
+    if st.button("▶️ Run Quality Check", use_container_width=True, key="posp_qc"):
+        total_rows = len(export_df)
+        issues_found = False
+        report_lines = []
+
+        for col in export_df.columns:
+            col_issues = []
+
+            # 1) Empty / NaN
+            empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+            if empty_count > 0:
+                col_issues.append(f"**{empty_count}** empty value(s)")
+
+            # 2) Text (letters)
+            non_empty = export_df[col].dropna().astype(str).str.strip()
+            non_empty = non_empty[non_empty != ""]
+            text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+            text_count = int(text_mask.sum())
+            if text_count > 0:
+                col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+            # 3) Special characters
+            special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
+            special_count = int(special_mask.sum())
+            if special_count > 0:
+                examples = non_empty[special_mask].head(3).tolist()
+                col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+            if col_issues:
+                issues_found = True
+                report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+            else:
+                report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+        if not issues_found:
+            st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+        else:
+            st.warning("⚠️ Some columns have issues. Review the report below:")
+
+        for line in report_lines:
+            st.markdown(line)
+
+    # ==========================================================
     # DOWNLOAD SECTION
     # ==========================================================
     st.markdown("---")
     st.subheader("💾 Export Cleaned File")
 
-    option = st.radio("Choose download option:", ["⬇️ Download All Output Columns", "🧩 Download Custom Columns"])
-
-    if option == "⬇️ Download All Output Columns":
-        final_df = export_df
-    else:
-        selected_columns = st.multiselect(
-            "Select columns (drag to reorder):",
-            options=list(export_df.columns),
-            default=list(export_df.columns),
-        )
-        final_df = export_df[selected_columns] if selected_columns else export_df
-
-    # Excel
+    # Excel (with headers)
     excel_buffer = io.BytesIO()
-    final_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+    export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
     excel_buffer.seek(0)
 
-    # TXT (semicolon-separated)
+    # TXT (space-separated, no headers)
     txt_buffer = io.StringIO()
-    final_df.to_csv(txt_buffer, index=False, sep=";")
+    export_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -262,7 +307,7 @@ if uploaded_file is not None:
         )
     with col2:
         st.download_button(
-            "📄 Download TXT (; separated)",
+            "📄 Download TXT (no headers)",
             txt_buffer.getvalue(),
             file_name="Escondida_POSP_Cleaned.txt",
             mime="text/plain",
