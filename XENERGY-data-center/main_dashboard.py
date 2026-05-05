@@ -1,99 +1,69 @@
 import streamlit as st
 import importlib.util
-import sys
 from pathlib import Path
 
-# ==========================================================
+# ===============================
 # PAGE CONFIGURATION
-# ==========================================================
+# ===============================
 st.set_page_config(
     page_title="MAXAM Data Process Center",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ==========================================================
-# HIDE DEFAULT STREAMLIT UI ELEMENTS
-# ==========================================================
-st.markdown(
-    """
+# Hide Streamlit default UI elements
+hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     [data-testid="stSidebar"] {display: none;}
     </style>
-    """,
-    unsafe_allow_html=True
-)
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# ==========================================================
+# ===============================
 # SESSION STATE INITIALIZATION
-# ==========================================================
+# ===============================
 if "page" not in st.session_state:
     st.session_state.page = "dashboard"
 
-# ==========================================================
-# HEADER BANNER IMAGE (FULL-WIDTH FACEBOOK-STYLE)
-# ==========================================================
-st.markdown(
-    """
-    <style>
-        .banner-container {
-            width: 100%;
-            height: 250px; /* adjust for taller or shorter look */
-            overflow: hidden;
-            border-radius: 10px;
-            margin-bottom: 25px;
-        }
-        .banner-container img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;  /* fills horizontally without distortion */
-            object-position: center; /* keeps the main part of the image centered */
-        }
-    </style>
+# ===============================
+# HEADER IMAGE
+# ===============================
+image_path = Path(__file__).parent / "Cover.png"
 
-    <div class="banner-container">
-        <img src="https://raw.githubusercontent.com/AkeraX6/XENERGY-data-center/main/XENERGY-data-center/Cover.png" alt="MAXAM Data Process Center Banner">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+if image_path.exists():
+    st.image(str(image_path), use_container_width=True)
+else:
+    st.warning("⚠️ Cover image not found: Cover.png")
 
-# ==========================================================
+# ===============================
 # PAGE: DASHBOARD
-# ==========================================================
+# ===============================
 def dashboard_page():
-    st.markdown(
-        """
-        <hr style='margin-top: 10px; margin-bottom: 25px;'>
-        """,
-        unsafe_allow_html=True
-    )
+    st.subheader("🧭 Select Processing Module")
 
-    st.subheader("🚩 Select Processing Module :")
-
-    mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos", "Mantos Verde"])
+    mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
-        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovle Position", "Mill"]
+        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovel Position", "Shovel Position New", "Block Models"]
     )
 
-    # Hemos quitado use_container_width=True porque da error en versiones antiguas de Streamlit
-    proceed_button = st.button("🚀 Proceed", width=True)
+    proceed_button = st.button("🚀 Proceed", use_container_width=True)
 
     if proceed_button:
         if mine == "Select..." or file_type == "Select...":
             st.warning("⚠️ Please select both Mine and File Type before proceeding.")
         else:
-            mine_codes = {"DGM": "DGM", "Escondida": "ES", "Mantos Blancos": "MB", "Mantos Verde": "MV"}
+            mine_codes = {"DGM": "DGM", "Escondida": "ES", "Mantos Blancos": "MB"}
             file_codes = {
                 "Drilling": "AUTO",
                 "QAQC": "QAQC",
                 "Fragmentation": "FRAG",
                 "Excavation": "EXCA",
-                "Shovle Position": "POSP",
-                "Mill": "Molino"
+                "Shovel Position": "POSP",
+                "Block Models": "MOB",
+                "Shovel Position New": "POSP2"
             }
 
             mine_code = mine_codes[mine]
@@ -104,9 +74,9 @@ def dashboard_page():
             st.session_state.page = "module"
             st.rerun()
 
-# ==========================================================
-# PAGE: MODULE EXECUTION
-# ==========================================================
+# ===============================
+# PAGE: MODULE
+# ===============================
 def module_page():
     pages_dir = Path(__file__).parent / "pages"
     module_name = st.session_state.selected_module
@@ -125,27 +95,19 @@ def module_page():
     if not module_path.exists():
         st.error(f"❌ The file `{module_name}` was not found in `/pages` folder.")
         return
-
-    # Load and execute selected module inline (force fresh load, no cache)
-    mod_key = module_name.replace(".py", "")
-    sys.modules.pop(mod_key, None)
-    sys.modules.pop(module_name, None)
-    spec = importlib.util.spec_from_file_location(mod_key, module_path)
+    
+    # Load and execute selected module inline
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-# ==========================================================
+# ===============================
 # NAVIGATION LOGIC
-# ==========================================================
+# ===============================
 if st.session_state.page == "dashboard":
     dashboard_page()
 else:
     module_page()
-
-
-
-
-
 
 
 
