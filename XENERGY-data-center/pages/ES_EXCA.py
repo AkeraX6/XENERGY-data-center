@@ -35,41 +35,53 @@ if st.button("⬅️ Back to Menu", key="back_esexca"):
     st.rerun()
 
 # ==========================================================
-# FILE UPLOAD
+# FILE UPLOAD (MULTIPLE FILES)
 # ==========================================================
-uploaded_file = st.file_uploader("📤 Upload your excavation file", type=["xlsx", "xls", "csv"])
+def read_csv_smart(file_obj):
+    sample = file_obj.read(8192).decode(errors="replace")
+    file_obj.seek(0)
+    try:
+        return pd.read_csv(file_obj, sep=None, engine="python")
+    except Exception:
+        if sample.count(";") > sample.count(","):
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, sep=";")
+        elif sample.count("\t") > 0:
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, sep="\t")
+        elif sample.count("|") > 0:
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, sep="|")
+        else:
+            file_obj.seek(0)
+            return pd.read_csv(file_obj)
 
-if uploaded_file is not None:
+uploaded_files = st.file_uploader(
+    "📤 Upload your excavation file(s)",
+    type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True
+)
 
-    file_name = uploaded_file.name.lower()
+if uploaded_files:
 
-    def read_csv_smart(file_obj):
-        sample = file_obj.read(8192).decode(errors="replace")
-        file_obj.seek(0)
-        try:
-            return pd.read_csv(file_obj, sep=None, engine="python")
-        except Exception:
-            if sample.count(";") > sample.count(","):
-                file_obj.seek(0)
-                return pd.read_csv(file_obj, sep=";")
-            elif sample.count("\t") > 0:
-                file_obj.seek(0)
-                return pd.read_csv(file_obj, sep="\t")
-            elif sample.count("|") > 0:
-                file_obj.seek(0)
-                return pd.read_csv(file_obj, sep="|")
-            else:
-                file_obj.seek(0)
-                return pd.read_csv(file_obj)
+    all_dfs_raw = []
+    all_dfs_cleaned = []
+    all_steps = {}
 
-    if file_name.endswith(".csv"):
-        df = read_csv_smart(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    for uploaded_file in uploaded_files:
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith(".csv"):
+            df_raw = read_csv_smart(uploaded_file)
+        else:
+            df_raw = pd.read_excel(uploaded_file)
+        all_dfs_raw.append(df_raw)
+
+    merged_raw = pd.concat(all_dfs_raw, ignore_index=True)
+    df = merged_raw.copy()
 
     st.subheader("📄 Original Data (Before Cleaning)")
     st.dataframe(df.head(10), use_container_width=True)
-    st.info(f"📏 Total rows before cleaning: {len(df)}")
+    st.info(f"📏 Total rows before cleaning: {len(df)}  ({len(uploaded_files)} file(s) merged)")
 
     original_rows = len(df)
     total_deleted = 0
@@ -87,6 +99,8 @@ if uploaded_file is not None:
         col_hora = find_column(df, ["HORA", "HORA1", "HORA 1"])
         col_pala = find_column(df, ["PALA", "PALA1"])
         col_tasaexca = find_column(df, ["TASAEXCA", "TASAEXC", "TASA_EXCA"])
+        col_cola = find_column(df, ["COLA"])
+        col_acula = find_column(df, ["ACULA"])
         col_carg = find_column(df, ["CARG"])
 
         # STEP 1 – FECHA → Dia, Mes, Año
@@ -198,7 +212,23 @@ if uploaded_file is not None:
         else:
             steps_done.append("⚠️ Column 'TASAEXCA' not found — no filter applied.")
 
-        # STEP 7 – CARG
+        # STEP 7 – COLA
+        if col_cola is not None:
+            df["COLA"] = pd.to_numeric(df[col_cola], errors="coerce")
+            steps_done.append("✅ COLA: kept as numeric.")
+        else:
+            df["COLA"] = 1000
+            steps_done.append("ℹ️ COLA column not found → created and filled with 1000.")
+
+        # STEP 8 – ACULA
+        if col_acula is not None:
+            df["ACULA"] = pd.to_numeric(df[col_acula], errors="coerce")
+            steps_done.append("✅ ACULA: kept as numeric.")
+        else:
+            df["ACULA"] = 1000
+            steps_done.append("ℹ️ ACULA column not found → created and filled with 1000.")
+
+        # STEP 9 – CARG
         if col_carg is not None:
             df["CARG"] = pd.to_numeric(df[col_carg], errors="coerce")
             steps_done.append("✅ CARG: kept as numeric.")
@@ -229,7 +259,7 @@ if uploaded_file is not None:
     st.markdown("---")
     st.subheader("✅ Cleaned Data Preview")
 
-    output_cols = ["Dia", "Mes", "Año", "TURNO", "CUADRILLA", "HORA", "HoraReal", "PALA", "TASAEXCA", "CARG"]
+    output_cols = ["Dia", "Mes", "Año", "TURNO", "CUADRILLA", "HORA", "HoraReal", "PALA", "TASAEXCA", "COLA", "ACULA", "CARG"]
     existing_output_cols = [c for c in output_cols if c in df.columns]
     export_df = df[existing_output_cols].copy()
 
@@ -239,7 +269,7 @@ if uploaded_file is not None:
             export_df[col] = export_df[col].round(2)
 
     st.dataframe(export_df.head(20), use_container_width=True)
-    st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns.")
+    st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns from {len(uploaded_files)} file(s).")
 
     # ==========================================================
     # DATA QUALITY CHECK
@@ -335,6 +365,5 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
-
 
 
