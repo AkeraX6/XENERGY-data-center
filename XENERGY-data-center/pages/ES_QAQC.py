@@ -343,6 +343,31 @@ def process_file(df):
         steps_done.append(
             f"✅ Cleaned '{asset_col}' column (removed letters; {before_non_numeric} entries contained text)."
         )
+
+        # STEP 8b – Fill empty Asset with most repeated in same Grid, else overall mode
+        df[asset_col] = _replace_dash_with_na(df[asset_col])
+        empty_before = int(df[asset_col].isna().sum())
+        if empty_before > 0 and "Grid" in df.columns:
+            # Mode per Grid (pattern)
+            grid_mode = df.dropna(subset=[asset_col]).groupby("Grid")[asset_col].agg(
+                lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else pd.NA
+            )
+            filled_mask = df[asset_col].isna()
+            df.loc[filled_mask, asset_col] = df.loc[filled_mask, "Grid"].map(grid_mode)
+
+        # Remaining empties → overall mode
+        still_empty = int(df[asset_col].isna().sum())
+        if still_empty > 0:
+            overall_mode = df[asset_col].mode()
+            if len(overall_mode) > 0:
+                df[asset_col] = df[asset_col].fillna(overall_mode.iloc[0])
+
+        filled_count = empty_before - int(df[asset_col].isna().sum())
+        if filled_count > 0:
+            steps_done.append(
+                f"✅ Filled {filled_count} empty Asset (truck) values "
+                f"(by most repeated in same pattern, then overall mode)."
+            )
     else:
         steps_done.append("⚠️ 'Asset' column not found.")
 
