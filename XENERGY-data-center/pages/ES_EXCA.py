@@ -233,6 +233,11 @@ if uploaded_file is not None:
     existing_output_cols = [c for c in output_cols if c in df.columns]
     export_df = df[existing_output_cols].copy()
 
+    # Round all float columns to 2 decimal places
+    for col in export_df.columns:
+        if pd.api.types.is_float_dtype(export_df[col]):
+            export_df[col] = export_df[col].round(2)
+
     st.dataframe(export_df.head(20), use_container_width=True)
     st.success(f"✅ Final dataset: {len(export_df)} rows × {len(export_df.columns)} columns.")
 
@@ -330,4 +335,6 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload an Excel or CSV file to begin.")
+
+
 
