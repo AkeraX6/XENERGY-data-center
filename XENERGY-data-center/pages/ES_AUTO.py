@@ -181,6 +181,74 @@ if st.button("⬅️ Back to Menu", key="back_esauto"):
     st.rerun()
 
 # ==========================================================
+# TRANSFORMATION LEGEND
+# ==========================================================
+with st.expander("📖 Transformation Mapping Legend", expanded=False):
+    lc1, lc2, lc3 = st.columns(3)
+    with lc1:
+        st.markdown("""
+**Coordinacion**
+| Input | Output |
+|-------|--------|
+| A | 1 |
+| B | 2 |
+| C | 3 |
+| D | 4 |
+""")
+        st.markdown("""
+**Turno**
+| Input | Output |
+|-------|--------|
+| Dia | 1 |
+| Noche | 2 |
+| Empty/other | 1 |
+""")
+    with lc2:
+        st.markdown("""
+**Expansion (Malla)** *(case-insensitive)*
+| Input | Output |
+|-------|--------|
+| N17B / n17b | 170 |
+| PL1S / pl1s | 101 |
+| N17 / n17 | 17 |
+| PL1 / pl1 | 1 |
+| S04 / s04 | 4 |
+| E07 / e07 | 7 |
+| N12 / n12 | 12 |
+| N11 / n11 | 11 |
+| N13 / n13 | 13 |
+| N14, S14, n14... | 14 |
+""")
+        st.markdown("""
+**Categoria de Pozo**
+| Input | Output |
+|-------|--------|
+| Produccion | 1 |
+| Buffer | 2 |
+| Auxiliar | Deleted |
+| Empty/other | 1 |
+""")
+    with lc3:
+        st.markdown("""
+**Pozo**
+| Prefix | Output |
+|--------|--------|
+| B + num | 100000 + num |
+| C + num | 200000 + num |
+| D + num | num |
+| Aux / AX / other letters | Deleted |
+""")
+        st.markdown("""
+**Modo de Perforacion**
+| Input | Output |
+|-------|--------|
+| Autonomous | 1 |
+| Manual | 2 |
+| Teleremote | 3 |
+| Empty/other | 1 |
+""")
+
+# ==========================================================
 # FILE UPLOADS
 # ==========================================================
 uploaded_file = st.file_uploader(
@@ -767,4 +835,3 @@ if uploaded_file is not None:
 
 else:
     st.info("📂 Please upload the Autonomia Excel file (and optionally the Operators mapping file) to begin.")
-
