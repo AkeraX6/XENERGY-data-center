@@ -110,6 +110,12 @@ if uploaded_files:
 
     df_pivot = df_pivot[["Number", "Day", "Month", "Year", "Hour", "Minute"] + expected_cols]
 
+    # --- Round numeric columns to max 3 decimals, tiny values → 0 ---
+    for col in expected_cols:
+        df_pivot[col] = pd.to_numeric(df_pivot[col], errors="coerce")
+        df_pivot[col] = df_pivot[col].apply(lambda x: 0 if (pd.notna(x) and abs(x) < 0.001) else x)
+        df_pivot[col] = df_pivot[col].round(3)
+
     # ==========================================================
     # SHOW RESULTS
     # ==========================================================
