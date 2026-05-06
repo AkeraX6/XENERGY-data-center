@@ -98,9 +98,9 @@ if uploaded_files:
         col_cuadrilla = find_column(df, ["CUADRILLA", "CUADRILL"])
         col_hora = find_column(df, ["HORA", "HORA1", "HORA 1"])
         col_pala = find_column(df, ["PALA", "PALA1"])
-        col_tasaexca = find_column(df, ["TASAEXCA", "TASAEXC", "TASA_EXCA"])
+        col_tasaexca = find_column(df, ["TASAEXCA", "TASAEXC", "TASA_EXCA", "TASA EXCA"])
         col_cola = find_column(df, ["COLA"])
-        col_acula = find_column(df, ["ACULA"])
+        col_acula = find_column(df, ["ACULA", "BOTA"])
         col_carg = find_column(df, ["CARG"])
 
         # STEP 1 – FECHA → Dia, Mes, Año
@@ -220,13 +220,13 @@ if uploaded_files:
             df["COLA"] = 1000
             steps_done.append("ℹ️ COLA column not found → created and filled with 1000.")
 
-        # STEP 8 – ACULA
+        # STEP 8 – ACULA / BOTA
         if col_acula is not None:
             df["ACULA"] = pd.to_numeric(df[col_acula], errors="coerce")
-            steps_done.append("✅ ACULA: kept as numeric.")
+            steps_done.append(f"✅ ACULA (from '{col_acula}'): kept as numeric.")
         else:
             df["ACULA"] = 1000
-            steps_done.append("ℹ️ ACULA column not found → created and filled with 1000.")
+            steps_done.append("ℹ️ ACULA/BOTA column not found → created and filled with 1000.")
 
         # STEP 9 – CARG
         if col_carg is not None:
