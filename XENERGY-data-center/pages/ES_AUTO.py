@@ -122,7 +122,8 @@ def parse_malla(text):
     if pd.isna(text):
         return (None, None, None)
     txt = str(text).strip()
-    parts = txt.split("-")
+    # Split by - or _ (supports "3040-N17B-5018" and "2870_N11_5004")
+    parts = re.split(r"[-_]", txt)
 
     # Banco = first 4-digit number
     m_level = re.search(r"(\d{4})", txt)
