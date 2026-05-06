@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import re
 import unicodedata
@@ -7,11 +8,10 @@ from difflib import SequenceMatcher
 from datetime import datetime
 
 # ==========================================================
-# SMALL HELPERS
+# HELPERS
 # ==========================================================
 
 def normalize_text(s: str) -> str:
-    """Lowercase, strip, remove accents and collapse spaces."""
     s = str(s).replace("\xa0", " ")
     s = s.strip().lower()
     s = unicodedata.normalize("NFD", s)
@@ -20,10 +20,9 @@ def normalize_text(s: str) -> str:
     return s
 
 def normalize_header(col: str) -> str:
-    """Header normalization: used to match input columns to expected names."""
     return normalize_text(col)
 
-# Canonical column list (what we expect to work with INSIDE the code)
+# Canonical column list (51 columns from input)
 EXPECTED_COLUMNS = [
     "Id", "Perforadora", "ShiftIndex", "tiempo incio de turno", "Tiempo final de turno",
     "turno (dia o noche)", "Coordinacion", "Malla", "Pozo", "tiempo de inicio de ciclo",
@@ -46,48 +45,129 @@ EXPECTED_COLUMNS = [
 
 expected_norm_map = {normalize_header(c): c for c in EXPECTED_COLUMNS}
 
-# -------- Pozo transformation helper (case + spaces robust) ----------
+# Output column order (25 columns)
+OUTPUT_COLUMNS = [
+    "Perforadora", "ShiftIndex", "turno (dia o noche)", "Coordinacion",
+    "Banco", "Expansion", "Pattern",
+    "Pozo", "Coordenadas diseño X", "Coordenadas diseño Y", "Coordenadas diseño Z",
+    "Coordenada real inicioX", "Coordenada real inicio Y", "Coordena real inicio Z",
+    "Dureza", "Velocidad de penetracion (m/minutos)", "RPM de perforacion", "Pulldown KN",
+    "Largo de pozo real", "Categoria de pozo", "Operador", "Broca",
+    "Modo de perforacion", "Velocidad efectiva ciclo (mt/hrs)", "Velocidad de penetracion (mts/hrs)"
+]
+
+# Expansion special mapping
+EXPANSION_MAP = {
+    "n17b": 170,
+    "pl1s": 101,
+}
+
+# ==========================================================
+# TRANSFORMATION FUNCTIONS
+# ==========================================================
+
 def transform_pozo_value(val):
-    """Apply B/C/D logic, remove Aux & invalids, return int or None."""
     if pd.isna(val):
         return None
     s = str(val).strip().lower()
-    s = s.replace(" ", "")  # "b 125" -> "b125"
+    s = s.replace(" ", "")
 
-    # Remove Aux or similar
-    if s.startswith("aux"):
+    # Anything containing "aux" -> delete
+    if "aux" in s:
         return None
 
-    # Only letters → invalid
+    # AX prefix -> delete
+    if s.startswith("ax"):
+        return None
+
+    # Only letters -> invalid
     if re.fullmatch(r"[a-z]+", s):
         return None
 
-    # Pattern letter + digits (b002, c120, d15...)
-    m = re.match(r"([a-z])(\d+)", s)
+    # letter + digits (possibly followed by junk like d146-2 -> 146)
+    m = re.match(r"([a-z])\s*(\d+)", s)
     if m:
         letter = m.group(1)
-        num = m.group(2)
+        num_str = m.group(2).lstrip("0") or "0"
+        num = int(num_str)
         if letter == "b":
-            return int("100000" + num)
+            return 100000 + num
         elif letter == "c":
-            return int("200000" + num)
+            return 200000 + num
         elif letter == "d":
-            return int(num)
+            return num if num > 0 else None
         else:
-            return int(num)
+            return None
 
     # Only digits
-    if s.isdigit():
-        return int(s)
+    digits_only = re.match(r"(\d+)", s)
+    if digits_only:
+        num = int(digits_only.group(1).lstrip("0") or "0")
+        return num if num > 0 else None
 
-    # Mixed weird stuff → discard
     return None
+
+
+def parse_expansion(mid_segment):
+    mid_lower = mid_segment.strip().lower()
+    if mid_lower in EXPANSION_MAP:
+        return EXPANSION_MAP[mid_lower]
+    digits = re.findall(r"\d+", mid_segment)
+    if digits:
+        return int(digits[0])
+    return None
+
+
+def parse_malla(text):
+    if pd.isna(text):
+        return (None, None, None)
+    txt = str(text).strip()
+    parts = txt.split("-")
+
+    # Banco = first 4-digit number
+    m_level = re.search(r"(\d{4})", txt)
+    banco = int(m_level.group(1)) if m_level else None
+
+    # Expansion from middle segment
+    expansion = None
+    if len(parts) >= 2:
+        expansion = parse_expansion(parts[1])
+
+    # Pattern = last 4-digit number (third segment)
+    pattern = None
+    if len(parts) >= 3:
+        m_pat = re.search(r"(\d{4})", parts[-1])
+        if m_pat:
+            pattern = int(m_pat.group(1))
+    else:
+        m_all = re.findall(r"(\d{4})", txt)
+        if len(m_all) >= 2:
+            pattern = int(m_all[-1])
+
+    return banco, expansion, pattern
+
+
+def extract_drillbit(val):
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    drillbit_patterns = [
+        ("541", re.compile(r"CN54S?$", re.IGNORECASE)),
+        ("44",  re.compile(r"(?:S|SJ|CN)44S?$", re.IGNORECASE)),
+        ("54",  re.compile(r"(?:S|SJ)54S?$", re.IGNORECASE)),
+        ("64",  re.compile(r"(?:CN|S)64S?$", re.IGNORECASE)),
+    ]
+    for code, pat in drillbit_patterns:
+        if pat.search(s):
+            return code
+    return ""
+
 
 # ==========================================================
 # PAGE HEADER
 # ==========================================================
 st.markdown(
-    "<h2 style='text-align:center;'>Escondida — Autonomía Data Cleaner</h2>",
+    "<h2 style='text-align:center;'>Escondida — Autonomia Data Cleaner</h2>",
     unsafe_allow_html=True
 )
 st.markdown(
@@ -96,7 +176,6 @@ st.markdown(
 )
 st.markdown("---")
 
-# 🔙 Back to Menu
 if st.button("⬅️ Back to Menu", key="back_esauto"):
     st.session_state.page = "dashboard"
     st.rerun()
@@ -105,7 +184,7 @@ if st.button("⬅️ Back to Menu", key="back_esauto"):
 # FILE UPLOADS
 # ==========================================================
 uploaded_file = st.file_uploader(
-    "📤 Upload Autonomía Excel file",
+    "📤 Upload Autonomia Excel file",
     type=["xlsx", "xls"],
     key="auto_file"
 )
@@ -118,334 +197,260 @@ uploaded_ops = st.file_uploader(
 
 if uploaded_file is not None:
     try:
-        # ---------------- Read main data file ----------------
         df = pd.read_excel(uploaded_file)
+        initial_rows = len(df)
 
-        # ---------------- Normalize headers ------------------
+        # ---------- Normalize headers ----------
         original_cols = list(df.columns)
         rename_map = {}
         for col in original_cols:
             norm = normalize_header(col)
             if norm in expected_norm_map:
                 rename_map[col] = expected_norm_map[norm]
-
         df = df.rename(columns=rename_map)
 
         steps_done = []
 
-        # Check which expected columns are missing (but do NOT stop)
+        # Check missing columns
         normalized_present = {normalize_header(c) for c in df.columns}
-        missing = [
-            col for col in EXPECTED_COLUMNS
-            if normalize_header(col) not in normalized_present
-        ]
+        missing = [c for c in EXPECTED_COLUMNS if normalize_header(c) not in normalized_present]
         if missing:
-            steps_done.append(
-                "⚠️ Some expected columns are missing or misnamed: " +
-                ", ".join(missing)
-            )
+            steps_done.append("⚠️ Missing columns: " + ", ".join(missing))
         else:
-            steps_done.append(
-                "✅ File column structure validated (ignoring spaces/accents/case)."
-            )
+            steps_done.append("✅ All 51 input columns found.")
 
         st.subheader("📄 Original Data (Before Cleaning)")
         st.dataframe(df.head(10), use_container_width=True)
-        st.info(f"📏 Total rows before cleaning: {len(df)}")
+        st.info(f"📏 Total rows before cleaning: {initial_rows}")
 
         # ==========================================================
-        # CLEANING & TRANSFORMATION STEPS
+        # CLEANING & TRANSFORMATION
         # ==========================================================
         with st.expander("⚙️ See Processing Steps", expanded=False):
 
-            # ------------------------------------------------------
-            # STEP 1 – Perforadora: keep only numeric value
-            # ------------------------------------------------------
+            # ==============================================================
+            # PRE-FILTER 1 — Estatus de pozo: keep only "Drilled"
+            # ==============================================================
+            if "Estatus de pozo" in df.columns:
+                before = len(df)
+                df = df[df["Estatus de pozo"].astype(str).str.strip().str.lower() == "drilled"]
+                deleted = before - len(df)
+                steps_done.append(f"✅ Filtered 'Estatus de pozo' -> kept only Drilled ({deleted} rows removed).")
+            else:
+                steps_done.append("⚠️ Column 'Estatus de pozo' not found.")
+
+            # ==============================================================
+            # PRE-FILTER 2 — Categoria de pozo: delete Auxiliar rows
+            # ==============================================================
+            if "Categoria de pozo" in df.columns:
+                before = len(df)
+                df = df[~df["Categoria de pozo"].astype(str).str.strip().str.lower().str.startswith("aux")]
+                deleted = before - len(df)
+                steps_done.append(f"✅ Removed 'Auxiliar' rows from 'Categoria de pozo' ({deleted} rows removed).")
+            else:
+                steps_done.append("⚠️ Column 'Categoria de pozo' not found.")
+
+            # ==============================================================
+            # STEP 1 — Perforadora: EDD0034 -> 34
+            # ==============================================================
             if "Perforadora" in df.columns:
                 def parse_perforadora(val):
                     s = str(val)
-                    digits = re.findall(r"(\d+)", s)
+                    digits = re.findall(r"\d+", s)
                     if digits:
                         return int(digits[-1])
-                    return pd.NA
-
+                    return 0
                 df["Perforadora"] = df["Perforadora"].apply(parse_perforadora)
-                steps_done.append("✅ Transformed 'Perforadora' → numeric ID (PE_01 → 1).")
+                steps_done.append("✅ Transformed 'Perforadora' -> numeric (EDD0034 -> 34).")
             else:
                 steps_done.append("⚠️ Column 'Perforadora' not found.")
 
-            # ------------------------------------------------------
-            # STEP 2 – Turno (dia o noche): Dia → 1, Noche → 2 (TurnoNew)
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 2 — ShiftIndex: keep as-is, empty/random -> 0
+            # ==============================================================
+            if "ShiftIndex" in df.columns:
+                df["ShiftIndex"] = pd.to_numeric(df["ShiftIndex"], errors="coerce").fillna(0)
+                steps_done.append("✅ 'ShiftIndex': ensured numeric, empty/invalid -> 0.")
+            else:
+                steps_done.append("⚠️ Column 'ShiftIndex' not found.")
+
+            # ==============================================================
+            # STEP 3 — Turno: Dia->1, Noche->2, empty/random->1
+            # ==============================================================
             if "turno (dia o noche)" in df.columns:
                 def map_turno(val):
-                    s = str(val).strip().lower()
-                    if s.startswith("d"):
-                        return 1
+                    s = normalize_text(str(val))
                     if s.startswith("n"):
                         return 2
-                    return pd.NA
-
-                idx = df.columns.get_loc("turno (dia o noche)")
-                df.insert(idx + 1, "TurnoNew", df["turno (dia o noche)"].apply(map_turno))
-                steps_done.append("✅ Created 'TurnoNew': Día→1, Noche→2 (original kept).")
+                    return 1
+                df["turno (dia o noche)"] = df["turno (dia o noche)"].apply(map_turno)
+                steps_done.append("✅ Transformed 'turno' -> Dia=1, Noche=2 (default 1).")
             else:
                 steps_done.append("⚠️ Column 'turno (dia o noche)' not found.")
 
-            # ------------------------------------------------------
-            # STEP 3 – Coordinacion: A=1, B=2, C=3, D=4 (CoordinacionNew)
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 4 — Coordinacion: A->1, B->2, C->3, D->4
+            # ==============================================================
             if "Coordinacion" in df.columns:
+                coord_map = {"a": 1, "b": 2, "c": 3, "d": 4}
                 def map_coord(val):
-                    s = str(val).strip().upper()
-                    if s == "A":
-                        return 1
-                    if s == "B":
-                        return 2
-                    if s == "C":
-                        return 3
-                    if s == "D":
-                        return 4
-                    return pd.NA
-
-                idx = df.columns.get_loc("Coordinacion")
-                df.insert(idx + 1, "CoordinacionNew", df["Coordinacion"].apply(map_coord))
-                steps_done.append("✅ Created 'CoordinacionNew': A→1, B→2, C→3, D→4 (original kept).")
+                    s = str(val).strip().lower()
+                    return coord_map.get(s, 0)
+                df["Coordinacion"] = df["Coordinacion"].apply(map_coord)
+                steps_done.append("✅ Transformed 'Coordinacion' -> A=1, B=2, C=3, D=4.")
             else:
                 steps_done.append("⚠️ Column 'Coordinacion' not found.")
 
-            # ------------------------------------------------------
-            # STEP 4 – Malla → Banco (Level), Expansion, MallaID
-            # Format always: 3040-N17B-5018, 3010-S04-6018, etc.
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 5 — Malla -> Banco, Expansion, Pattern (replaces Malla)
+            # ==============================================================
             if "Malla" in df.columns:
-                def parse_malla(text):
-                    if pd.isna(text):
-                        return (None, None, None)
-                    txt = str(text).strip()
-                    parts = txt.split("-")
-
-                    # Banco/Level = first 4-digit number anywhere
-                    m_level = re.search(r"(\d{4})", txt)
-                    banco = int(m_level.group(1)) if m_level else None
-
-                    # Expansion = numeric part of middle segment (N17B → 17, S04 → 4, PL1S → 1)
-                    expansion = None
-                    if len(parts) >= 2:
-                        mid = parts[1]
-                        m_exp = re.search(r"(\d{1,2})", mid)
-                        if m_exp:
-                            expansion = int(m_exp.group(1))
-
-                    # MallaID = last 4-digit number (usually third segment)
-                    mallaid = None
-                    if len(parts) >= 3:
-                        last = parts[-1]
-                        m_mid = re.search(r"(\d{4})", last)
-                        if m_mid:
-                            mallaid = int(m_mid.group(1))
-                    else:
-                        # fallback: last 4-digit sequence anywhere
-                        m_all = re.findall(r"(\d{4})", txt)
-                        if m_all:
-                            mallaid = int(m_all[-1])
-
-                    return banco, expansion, mallaid
-
-                bancos = []
-                expansions = []
-                mallaids = []
-
+                bancos, expansions, patterns = [], [], []
                 for val in df["Malla"]:
-                    b, e, mid = parse_malla(val)
+                    b, e, p = parse_malla(val)
                     bancos.append(b)
                     expansions.append(e)
-                    mallaids.append(mid)
+                    patterns.append(p)
 
-                # Original Malla preserved; MallaID added
                 idx_malla = df.columns.get_loc("Malla")
-                df.insert(idx_malla + 1, "Banco", bancos)
-                df.insert(idx_malla + 2, "Expansion", expansions)
-                df.insert(idx_malla + 3, "MallaID", mallaids)
-
-                steps_done.append("✅ Parsed 'Malla' → Banco(Level), Expansion, MallaID (no separate Grid).")
+                df.insert(idx_malla, "Banco", bancos)
+                df.insert(idx_malla + 1, "Expansion", expansions)
+                df.insert(idx_malla + 2, "Pattern", patterns)
+                df = df.drop(columns=["Malla"])
+                steps_done.append("✅ Parsed 'Malla' -> Banco, Expansion, Pattern (N17B=170, PL1S=101).")
             else:
-                steps_done.append("⚠️ Column 'Malla' not found in the dataset.")
+                steps_done.append("⚠️ Column 'Malla' not found.")
 
-            # ------------------------------------------------------
-            # STEP 5 – Pozo: B/C/D logic, remove Aux, letters, <=0
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 6 — Pozo: B/C/D logic, remove aux/invalid/negative
+            # ==============================================================
             if "Pozo" in df.columns:
-                before_rows = len(df)
-
+                before = len(df)
                 df["Pozo"] = df["Pozo"].apply(transform_pozo_value)
                 df = df[df["Pozo"].notna()]
                 df = df[df["Pozo"] > 0]
-
-                deleted_rows = before_rows - len(df)
-                steps_done.append(f"✅ Cleaned 'Pozo' with B/C/D logic ({deleted_rows} invalid rows deleted).")
+                deleted = before - len(df)
+                steps_done.append(f"✅ Cleaned 'Pozo' with B/C/D logic ({deleted} invalid rows removed).")
             else:
                 steps_done.append("⚠️ Column 'Pozo' not found.")
 
-            # ------------------------------------------------------
-            # STEP 6 – Coordinates: cross-fill + remove negatives + X >= 100000
-            # ------------------------------------------------------
-            before_rows = len(df)
-
-            # Ensure Banco exists for Z fallback
-            if "Banco" not in df.columns:
-                df["Banco"] = pd.NA
-                st.warning("⚠️ 'Banco' column missing — Z fallback (Banco+15) may be incomplete.")
-
+            # ==============================================================
+            # STEP 7 — Coordinates: cross-fill, remove negatives, X>=100000
+            # ==============================================================
+            before = len(df)
             coord_cols = [
                 "Coordenadas diseño X", "Coordenadas diseño Y", "Coordenadas diseño Z",
                 "Coordenada real inicioX", "Coordenada real inicio Y", "Coordena real inicio Z"
             ]
             existing_coord = [c for c in coord_cols if c in df.columns]
-            if existing_coord:
-                df[existing_coord] = df[existing_coord].apply(
-                    lambda s: pd.to_numeric(s, errors="coerce")
-                )
+            for c in existing_coord:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
 
-            # X
+            # X cross-fill
             if "Coordenadas diseño X" in df.columns and "Coordenada real inicioX" in df.columns:
                 df["Coordenadas diseño X"] = df["Coordenadas diseño X"].fillna(df["Coordenada real inicioX"])
                 df["Coordenada real inicioX"] = df["Coordenada real inicioX"].fillna(df["Coordenadas diseño X"])
-                mask_x_empty = df["Coordenadas diseño X"].isna() & df["Coordenada real inicioX"].isna()
-                df = df[~mask_x_empty]
+                both_x_empty = df["Coordenadas diseño X"].isna() & df["Coordenada real inicioX"].isna()
+                df = df[~both_x_empty]
 
-            # Y
+            # Y cross-fill
             if "Coordenadas diseño Y" in df.columns and "Coordenada real inicio Y" in df.columns:
                 df["Coordenadas diseño Y"] = df["Coordenadas diseño Y"].fillna(df["Coordenada real inicio Y"])
                 df["Coordenada real inicio Y"] = df["Coordenada real inicio Y"].fillna(df["Coordenadas diseño Y"])
-                mask_y_empty = df["Coordenadas diseño Y"].isna() & df["Coordenada real inicio Y"].isna()
-                df = df[~mask_y_empty]
+                both_y_empty = df["Coordenadas diseño Y"].isna() & df["Coordenada real inicio Y"].isna()
+                df = df[~both_y_empty]
 
-            # Z
+            # Z cross-fill + Banco fallback
             if "Coordenadas diseño Z" in df.columns and "Coordena real inicio Z" in df.columns:
                 df["Coordenadas diseño Z"] = df["Coordenadas diseño Z"].fillna(df["Coordena real inicio Z"])
                 df["Coordena real inicio Z"] = df["Coordena real inicio Z"].fillna(df["Coordenadas diseño Z"])
-                both_empty_mask = df["Coordenadas diseño Z"].isna() & df["Coordena real inicio Z"].isna()
-                if both_empty_mask.any():
-                    df.loc[both_empty_mask, "Coordenadas diseño Z"] = (
-                        pd.to_numeric(df.loc[both_empty_mask, "Banco"], errors="coerce") + 15
-                    )
-                    df.loc[both_empty_mask, "Coordena real inicio Z"] = df.loc[both_empty_mask, "Coordenadas diseño Z"]
+                both_z_empty = df["Coordenadas diseño Z"].isna() & df["Coordena real inicio Z"].isna()
+                if both_z_empty.any() and "Banco" in df.columns:
+                    banco_val = pd.to_numeric(df.loc[both_z_empty, "Banco"], errors="coerce")
+                    df.loc[both_z_empty, "Coordenadas diseño Z"] = banco_val
+                    df.loc[both_z_empty, "Coordena real inicio Z"] = banco_val
 
-            # Remove rows with any negative coordinate (design or real)
+            # Remove negative coordinates
             neg_mask = pd.Series(False, index=df.index)
-            for c in ["Coordenadas diseño X", "Coordenadas diseño Y", "Coordenadas diseño Z",
-                      "Coordenada real inicioX", "Coordenada real inicio Y", "Coordena real inicio Z"]:
+            for c in existing_coord:
                 if c in df.columns:
                     neg_mask = neg_mask | (df[c] < 0)
-
             df = df[~neg_mask]
 
-            # Remove rows where any X < 100000 (design or real)
+            # Remove X < 100000
             if "Coordenadas diseño X" in df.columns and "Coordenada real inicioX" in df.columns:
                 df = df[
                     (df["Coordenadas diseño X"] >= 100000) &
                     (df["Coordenada real inicioX"] >= 100000)
                 ]
 
-            deleted_rows_coord = before_rows - len(df)
-            steps_done.append(
-                f"✅ Cleaned coordinates: cross-filled, removed negatives/X<100000 "
-                f"({deleted_rows_coord} rows deleted)."
-            )
+            deleted = before - len(df)
+            steps_done.append(f"✅ Coordinates: cross-filled, negatives/X<100000 removed ({deleted} rows).")
 
-            # ------------------------------------------------------
-            # STEP 7 – Dureza / RPM / Velocidad / Pulldown rules
-            # ------------------------------------------------------
-            # Dureza: empty → 0
+            # ==============================================================
+            # STEP 8 — Dureza & RPM: empty -> 0
+            # ==============================================================
             if "Dureza" in df.columns:
                 df["Dureza"] = pd.to_numeric(df["Dureza"], errors="coerce").fillna(0)
-                steps_done.append("✅ 'Dureza': empty values filled with 0.")
-            else:
-                steps_done.append("⚠️ Column 'Dureza' not found.")
+                steps_done.append("✅ 'Dureza': empty -> 0.")
 
-            # RPM de perforacion: empty → 0
             if "RPM de perforacion" in df.columns:
                 df["RPM de perforacion"] = pd.to_numeric(df["RPM de perforacion"], errors="coerce").fillna(0)
-                steps_done.append("✅ 'RPM de perforacion': empty values filled with 0.")
-            else:
-                steps_done.append("⚠️ Column 'RPM de perforacion' not found.")
+                steps_done.append("✅ 'RPM de perforacion': empty -> 0.")
 
-            # Velocidad de penetracion (m/minutos): empty or 0 → delete row
+            # ==============================================================
+            # STEP 9 — Velocidad de penetracion: remove 0 or empty
+            # ==============================================================
             if "Velocidad de penetracion (m/minutos)" in df.columns:
                 before = len(df)
                 df["Velocidad de penetracion (m/minutos)"] = pd.to_numeric(
                     df["Velocidad de penetracion (m/minutos)"], errors="coerce"
                 )
                 df = df[df["Velocidad de penetracion (m/minutos)"] > 0]
-                deleted = before - len(df)
-                steps_done.append(
-                    f"✅ 'Velocidad de penetracion (m/minutos)': removed {deleted} rows (empty or 0)."
-                )
-            else:
-                steps_done.append("⚠️ Column 'Velocidad de penetracion (m/minutos)' not found.")
+                steps_done.append(f"✅ 'Velocidad penetracion': removed {before - len(df)} rows (empty/0).")
 
-            # Pulldown KN: empty or 0 → delete row
+            # ==============================================================
+            # STEP 10 — Pulldown KN: remove 0 or empty
+            # ==============================================================
             if "Pulldown KN" in df.columns:
                 before = len(df)
                 df["Pulldown KN"] = pd.to_numeric(df["Pulldown KN"], errors="coerce")
                 df = df[df["Pulldown KN"] > 0]
-                deleted = before - len(df)
-                steps_done.append(
-                    f"✅ 'Pulldown KN': removed {deleted} rows (empty or 0)."
-                )
-            else:
-                steps_done.append("⚠️ Column 'Pulldown KN' not found.")
+                steps_done.append(f"✅ 'Pulldown KN': removed {before - len(df)} rows (empty/0).")
 
-            # ------------------------------------------------------
-            # STEP 8 – Remove empty or zero Largo de pozo real
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 11 — Largo de pozo real: numeric, <=40, fallback to planeado
+            # ==============================================================
             if "Largo de pozo real" in df.columns:
-                before_len = len(df)
                 df["Largo de pozo real"] = pd.to_numeric(df["Largo de pozo real"], errors="coerce")
-                df = df[df["Largo de pozo real"].notna()]
-                df = df[df["Largo de pozo real"] != 0]
-                deleted_len = before_len - len(df)
-                steps_done.append(
-                    f"✅ Removed {deleted_len} rows with empty or zero 'Largo de pozo real'."
-                )
-            else:
-                steps_done.append("⚠️ Column 'Largo de pozo real' not found.")
+                if "Largo de pozo planeado" in df.columns:
+                    df["Largo de pozo planeado"] = pd.to_numeric(df["Largo de pozo planeado"], errors="coerce")
+                    df["Largo de pozo real"] = df["Largo de pozo real"].fillna(df["Largo de pozo planeado"])
+                # Values > 40 -> replace with planeado if available, else NaN
+                too_big = df["Largo de pozo real"] > 40
+                if too_big.any() and "Largo de pozo planeado" in df.columns:
+                    fallback = df.loc[too_big, "Largo de pozo planeado"]
+                    fallback = fallback.where(fallback <= 40)
+                    df.loc[too_big, "Largo de pozo real"] = fallback
+                elif too_big.any():
+                    df.loc[too_big, "Largo de pozo real"] = pd.NA
+                steps_done.append("✅ 'Largo de pozo real': numeric, <=40, fallback to planeado.")
 
-            # ------------------------------------------------------
-            # STEP 9 – Categoria de pozo → CategoriaNew (1,2,3)
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 12 — Categoria de pozo: Produccion->1, Buffer->2, empty->1
+            # ==============================================================
             if "Categoria de pozo" in df.columns:
                 def map_cat(val):
                     s = str(val).strip().lower()
-                    if s.startswith("prod"):
-                        return 1
                     if s.startswith("buff"):
                         return 2
-                    if s.startswith("aux"):
-                        return 3
-                    if s in ["1", "2", "3"]:
-                        return int(s)
-                    return pd.NA
+                    return 1
+                df["Categoria de pozo"] = df["Categoria de pozo"].apply(map_cat)
+                steps_done.append("✅ 'Categoria de pozo': Produccion/empty->1, Buffer->2.")
 
-                idx_cat = df.columns.get_loc("Categoria de pozo")
-                df.insert(idx_cat + 1, "CategoriaNew", df["Categoria de pozo"].apply(map_cat))
-                steps_done.append("✅ Created 'CategoriaNew': Producción→1, Buffer→2, Auxiliar→3 (original kept).")
-            else:
-                steps_done.append("⚠️ Column 'Categoria de pozo' not found.")
-
-            # ------------------------------------------------------
-            # STEP 10 – Estatus de pozo: NO FILTER in cleaning
-            # (Filter will be applied ONLY in TXT export)
-            # ------------------------------------------------------
-            if "Estatus de pozo" in df.columns:
-                steps_done.append("ℹ️ 'Estatus de pozo' kept as-is. Drilled-only filter will be applied only for TXT export.")
-            else:
-                steps_done.append("⚠️ Column 'Estatus de pozo' not found.")
-
-            # ------------------------------------------------------
-            # STEP 11 – Operator Mapping (from uploaded mapping file) → OperadorNew
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 13 — Operador: map from uploaded file
+            # ==============================================================
             new_ops_df = None
             if "Operador" in df.columns:
                 if uploaded_ops is None:
@@ -453,8 +458,6 @@ if uploaded_file is not None:
                 else:
                     try:
                         ops_df = pd.read_excel(uploaded_ops)
-
-                        # Normalize headers in operators file
                         ops_rename = {}
                         for c in ops_df.columns:
                             n = normalize_header(c)
@@ -465,9 +468,8 @@ if uploaded_file is not None:
                         ops_df = ops_df.rename(columns=ops_rename)
 
                         if "Nombre" not in ops_df.columns or "Codigo" not in ops_df.columns:
-                            steps_done.append("⚠️ Operators file must contain 'Nombre' and 'Codigo' columns.")
+                            steps_done.append("⚠️ Operators file must have 'Nombre' and 'Codigo'.")
                         else:
-                            # Normalize names and build map
                             ops_df["Nombre"] = ops_df["Nombre"].astype(str).str.strip()
                             ops_df["Codigo"] = pd.to_numeric(ops_df["Codigo"], errors="coerce").astype("Int64")
                             ops_df = ops_df.dropna(subset=["Codigo"])
@@ -479,69 +481,96 @@ if uploaded_file is not None:
 
                             max_code = int(ops_df["Codigo"].max() or 0)
                             next_code_box = [max_code + 1]
-
                             new_norm_to_code = {}
                             new_ops = []
 
                             def map_operator(raw):
-                                # Empty → 75
                                 if pd.isna(raw) or str(raw).strip() == "":
                                     return 75
                                 s_norm = re.sub(r"\s+", "", normalize_text(raw))
 
-                                # Exact normalized match
                                 if s_norm in norm_to_code:
                                     return int(norm_to_code[s_norm])
 
-                                # Fuzzy against existing operators
-                                candidates = list(norm_to_code.keys())
-                                if candidates:
-                                    best = None
-                                    best_sim = 0.0
-                                    for key in candidates:
-                                        sim = SequenceMatcher(None, s_norm, key).ratio()
-                                        if sim > best_sim:
-                                            best_sim = sim
-                                            best = key
-                                    if best is not None and best_sim >= 0.90:
-                                        return int(norm_to_code[best])
+                                # Fuzzy match against existing
+                                best, best_sim = None, 0.0
+                                for key in norm_to_code:
+                                    sim = SequenceMatcher(None, s_norm, key).ratio()
+                                    if sim > best_sim:
+                                        best_sim = sim
+                                        best = key
+                                if best is not None and best_sim >= 0.85:
+                                    return int(norm_to_code[best])
 
-                                # Check among new operators we've already created
+                                # Check among new operators
                                 for known_norm, code in new_norm_to_code.items():
                                     sim = SequenceMatcher(None, s_norm, known_norm).ratio()
-                                    if sim >= 0.95:
+                                    if sim >= 0.90:
                                         return int(code)
 
-                                # New operator → assign next code
+                                # New operator
                                 code = next_code_box[0]
                                 next_code_box[0] += 1
                                 new_norm_to_code[s_norm] = code
                                 new_ops.append((str(raw).strip(), code))
                                 return int(code)
 
-                            # Create OperadorNew next to Operador
-                            idx_op = df.columns.get_loc("Operador")
-                            operador_new_series = df["Operador"].apply(map_operator)
-                            df.insert(idx_op + 1, "OperadorNew", operador_new_series)
+                            df["Operador"] = df["Operador"].apply(map_operator)
 
                             if new_ops:
                                 new_ops_df = pd.DataFrame(new_ops, columns=["Nombre", "Codigo"])
                                 steps_done.append(f"🆕 New operators detected: {len(new_ops)}")
                             else:
-                                steps_done.append("✅ All operators matched existing mapping — no new ones added.")
+                                steps_done.append("✅ All operators matched — no new ones.")
 
                     except Exception as e:
                         steps_done.append(f"⚠️ Operator mapping error: {e}")
-            else:
-                steps_done.append("⚠️ Column 'Operador' not found.")
 
-            # ------------------------------------------------------
-            # STEP 12 – Modo de perforacion → ModoNew
-            # Autonomous=1, Manual=2, Teleremote=3
-            # ------------------------------------------------------
+            # ==============================================================
+            # STEP 14 — Broca: extract drill bit code (44/54/541/64)
+            # ==============================================================
+            if "Broca" in df.columns:
+                df["Broca"] = df["Broca"].apply(extract_drillbit)
+
+                # Primary fallback by Perforadora
+                if "Perforadora" in df.columns:
+                    empty_mask = df["Broca"] == ""
+                    if empty_mask.any():
+                        valid = df.loc[~empty_mask]
+                        if not valid.empty:
+                            mode_by_rig = valid.groupby("Perforadora")["Broca"].agg(
+                                lambda x: x.mode().iloc[0] if len(x) >= 2 and not x.mode().empty else ""
+                            )
+                            for idx in df.loc[empty_mask].index:
+                                rig = df.at[idx, "Perforadora"]
+                                if rig in mode_by_rig.index and mode_by_rig[rig] != "":
+                                    df.at[idx, "Broca"] = mode_by_rig[rig]
+
+                # Secondary fallback by Coordinacion
+                if "Coordinacion" in df.columns:
+                    empty_mask = df["Broca"] == ""
+                    if empty_mask.any():
+                        valid = df.loc[~empty_mask]
+                        if not valid.empty:
+                            mode_by_crew = valid.groupby("Coordinacion")["Broca"].agg(
+                                lambda x: x.mode().iloc[0] if len(x) >= 2 and not x.mode().empty else ""
+                            )
+                            for idx in df.loc[empty_mask].index:
+                                crew = df.at[idx, "Coordinacion"]
+                                if crew in mode_by_crew.index and mode_by_crew[crew] != "":
+                                    df.at[idx, "Broca"] = mode_by_crew[crew]
+
+                # Convert to numeric
+                df["Broca"] = pd.to_numeric(df["Broca"], errors="coerce").fillna(0)
+                remaining = (df["Broca"] == 0).sum()
+                steps_done.append(f"✅ 'Broca' -> drill bit code (44/54/541/64). {remaining} unresolved.")
+
+            # ==============================================================
+            # STEP 15 — Modo de perforacion: Autonomous=1, Manual=2, Teleremote=3
+            # ==============================================================
             if "Modo de perforacion" in df.columns:
                 def map_modo(val):
-                    s = str(val).strip().lower()
+                    s = normalize_text(str(val))
                     if s.startswith("auton"):
                         return 1
                     if s.startswith("manu"):
@@ -550,58 +579,129 @@ if uploaded_file is not None:
                         return 3
                     if s in ["1", "2", "3"]:
                         return int(s)
-                    return pd.NA
+                    return 1
+                df["Modo de perforacion"] = df["Modo de perforacion"].apply(map_modo)
+                steps_done.append("✅ 'Modo de perforacion': Autonomous=1, Manual=2, Teleremote=3.")
 
-                idx_modo = df.columns.get_loc("Modo de perforacion")
-                df.insert(idx_modo + 1, "ModoNew", df["Modo de perforacion"].apply(map_modo))
-                steps_done.append("✅ Created 'ModoNew': Autonomous→1, Manual→2, Teleremote→3 (original kept).")
-            else:
-                steps_done.append("⚠️ Column 'Modo de perforacion' not found.")
+            # ==============================================================
+            # STEP 16 — Velocidad efectiva & Velocidad penetracion (mts/hrs)
+            # ==============================================================
+            for vel_col in ["Velocidad efectiva ciclo (mt/hrs)", "Velocidad de penetracion (mts/hrs)"]:
+                if vel_col in df.columns:
+                    before = len(df)
+                    df[vel_col] = pd.to_numeric(df[vel_col], errors="coerce")
+                    df = df[df[vel_col] > 0]
+                    steps_done.append(f"✅ '{vel_col}': removed {before - len(df)} rows (empty/negative).")
 
-            # --- Display Steps in Green Cards ---
+            # ==============================================================
+            # FINAL — Round all numeric columns to 2 decimals
+            # ==============================================================
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = df[col].round(2)
+
+            steps_done.append(f"✅ All numeric values rounded to 2 decimal places.")
+            steps_done.append(f"📊 Final: {len(df)} rows (from {initial_rows} original).")
+
+            # --- Display Steps ---
             for step in steps_done:
+                if step.startswith("✅"):
+                    color, bg = "#137333", "#e8f8f0"
+                elif step.startswith("⚠️"):
+                    color, bg = "#b45309", "#fef3c7"
+                else:
+                    color, bg = "#1a56db", "#e0edff"
                 st.markdown(
-                    f"<div style='background-color:#e8f8f0;padding:10px;border-radius:8px;margin-bottom:8px;'>"
-                    f"<span style='color:#137333;font-weight:500;'>{step}</span></div>",
+                    f"<div style='background-color:{bg};padding:10px;border-radius:8px;margin-bottom:8px;'>"
+                    f"<span style='color:{color};font-weight:500;'>{step}</span></div>",
                     unsafe_allow_html=True
                 )
 
-            # If there are new operators, show them in a small table
-            if uploaded_ops is not None and 'new_ops_df' in locals() and new_ops_df is not None and not new_ops_df.empty:
-                st.markdown("### 🆕 New operators suggested")
+            # Show new operators
+            if uploaded_ops is not None and new_ops_df is not None and not new_ops_df.empty:
+                st.markdown("### 🆕 New operators detected")
                 st.dataframe(new_ops_df, use_container_width=True)
 
         # ==========================================================
-        # AFTER CLEANING
+        # QUALITY CHECKER
         # ==========================================================
         st.markdown("---")
-        st.subheader("✅ Cleaned Data Preview")
-        st.dataframe(df.head(15), use_container_width=True)
-        st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
+        st.subheader("🔍 Quality Checker")
 
-        # ==========================================================
-        # DOWNLOAD SECTION (EXCEL + CSV)
-        # ==========================================================
-        st.markdown("---")
-        st.subheader("💾 Export Cleaned Autonomía File")
+        # Build output dataframe
+        available_out = [c for c in OUTPUT_COLUMNS if c in df.columns]
+        missing_out = [c for c in OUTPUT_COLUMNS if c not in df.columns]
 
-        option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
-        if option == "⬇️ Download All Columns":
-            export_df = df
+        if missing_out:
+            st.warning(f"⚠️ Missing output columns (will be skipped): {', '.join(missing_out)}")
+
+        df_out = df[available_out].copy()
+
+        # Quality check per column
+        quality_issues = []
+        for pos, col in enumerate(df_out.columns, start=1):
+            issues_in_col = []
+            na_count = df_out[col].isna().sum()
+            if na_count > 0:
+                issues_in_col.append(f"{na_count} empty/NaN")
+
+            numeric_col = pd.to_numeric(df_out[col], errors="coerce")
+            non_numeric = df_out[col].notna() & numeric_col.isna()
+            non_num_count = non_numeric.sum()
+            if non_num_count > 0:
+                bad_vals = df_out.loc[non_numeric, col].unique()[:5]
+                issues_in_col.append(f"{non_num_count} non-numeric (e.g. {list(bad_vals)})")
+
+            neg_count = (numeric_col < 0).sum()
+            if neg_count > 0:
+                issues_in_col.append(f"{neg_count} negative")
+
+            if issues_in_col:
+                quality_issues.append({
+                    "Position": pos,
+                    "Column": col,
+                    "Issues": " | ".join(issues_in_col)
+                })
+
+        if quality_issues:
+            qi_df = pd.DataFrame(quality_issues)
+            st.markdown("#### ❌ Issues Found")
+            st.dataframe(qi_df, use_container_width=True, hide_index=True)
+
+            with st.expander("🔎 See rows with issues", expanded=False):
+                for qi in quality_issues:
+                    col = qi["Column"]
+                    numeric_col = pd.to_numeric(df_out[col], errors="coerce")
+                    bad_mask = df_out[col].isna() | numeric_col.isna() | (numeric_col < 0)
+                    bad_rows = df_out[bad_mask]
+                    if not bad_rows.empty:
+                        st.markdown(f"**Column {qi['Position']}: {col}** — {len(bad_rows)} problematic rows:")
+                        st.dataframe(bad_rows.head(20), use_container_width=True)
         else:
-            selected_columns = st.multiselect(
-                "Select columns (drag to reorder):",
-                options=list(df.columns),
-                default=list(df.columns)
-            )
-            export_df = df[selected_columns] if selected_columns else df
+            st.success("✅ All output columns are fully numeric — no empty, negative, or text values.")
 
+        # ==========================================================
+        # PREVIEW
+        # ==========================================================
+        st.markdown("---")
+        st.subheader("✅ Cleaned Data Preview (Output Order)")
+        st.dataframe(df_out.head(15), use_container_width=True)
+        st.success(f"✅ Final dataset: {len(df_out)} rows x {len(df_out.columns)} columns.")
+
+        # ==========================================================
+        # DOWNLOADS
+        # ==========================================================
+        st.markdown("---")
+        st.subheader("💾 Export Cleaned File")
+
+        # Excel with headers
         excel_buffer = io.BytesIO()
-        export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+        df_out.to_excel(excel_buffer, index=False, engine="openpyxl")
         excel_buffer.seek(0)
 
-        csv_buffer = io.StringIO()
-        export_df.to_csv(csv_buffer, index=False)
+        # TXT without headers
+        txt_buffer = io.StringIO()
+        df_out.to_csv(txt_buffer, index=False, header=False, sep="\t")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -614,20 +714,19 @@ if uploaded_file is not None:
             )
         with col2:
             st.download_button(
-                "📗 Download CSV File",
-                csv_buffer.getvalue(),
-                file_name="Escondida_Autonomia_Cleaned.csv",
-                mime="text/csv",
+                "📄 Download TXT File (no headers)",
+                txt_buffer.getvalue(),
+                file_name="Escondida_Autonomia_Cleaned.txt",
+                mime="text/plain",
                 use_container_width=True
             )
 
         # ==========================================================
-        # DOWNLOAD UPDATED OPERATORS (IF ANY)
+        # UPDATED OPERATORS FILE (only if new operators found)
         # ==========================================================
-        if uploaded_ops is not None and 'new_ops_df' in locals() and new_ops_df is not None and not new_ops_df.empty:
+        if uploaded_ops is not None and new_ops_df is not None and not new_ops_df.empty:
             try:
                 ops_base = pd.read_excel(uploaded_ops)
-                # Normalize headers like before
                 ops_rename2 = {}
                 for c in ops_base.columns:
                     n = normalize_header(c)
@@ -637,7 +736,6 @@ if uploaded_file is not None:
                         ops_rename2[c] = "Codigo"
                 ops_base = ops_base.rename(columns=ops_rename2)
 
-                # Append new operators
                 updated_ops = pd.concat(
                     [ops_base[["Nombre", "Codigo"]], new_ops_df],
                     ignore_index=True
@@ -648,43 +746,18 @@ if uploaded_file is not None:
                 ops_buffer.seek(0)
 
                 today_str = datetime.now().strftime("%d_%m_%Y")
-                ops_filename = f"ES_Operators_{today_str}.xlsx"
 
                 st.markdown("---")
                 st.subheader("💾 Export Updated Operators Mapping")
                 st.download_button(
-                    "📘 Download Updated ES_Operators File",
+                    "📘 Download Updated Operators File",
                     ops_buffer,
-                    file_name=ops_filename,
+                    file_name=f"Operators_MEL_{today_str}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
             except Exception as e:
                 st.warning(f"⚠️ Could not build updated operators file: {e}")
-
-        # ==========================================================
-        # TXT EXPORT — ONLY DRILLED + CategoriaNew 1–2
-        # ==========================================================
-        st.markdown("---")
-        st.subheader("📄 Export TXT (Drilled + Categoria 1–2)")
-
-        # Work from full cleaned df, not from export_df
-        df_txt = df.copy()
-        if "Estatus de pozo" in df_txt.columns:
-            df_txt = df_txt[df_txt["Estatus de pozo"].astype(str).str.strip().str.lower() == "drilled"]
-        if "CategoriaNew" in df_txt.columns:
-            df_txt = df_txt[df_txt["CategoriaNew"].isin([1, 2])]
-
-        txt_buffer = io.StringIO()
-        df_txt.to_csv(txt_buffer, index=False, sep="|")
-
-        st.download_button(
-            "📄 Download TXT (Drilled Only)",
-            txt_buffer.getvalue(),
-            file_name="Escondida_Autonomia_Drilled.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
 
         st.markdown("<hr>", unsafe_allow_html=True)
         st.caption("Built by Maxam - Omar El Kendi -")
@@ -693,5 +766,5 @@ if uploaded_file is not None:
         st.error(f"⚠️ Error processing file: {e}")
 
 else:
-    st.info("📂 Please upload the Autonomía Excel file (and optionally the Operators mapping file) to begin.")
+    st.info("📂 Please upload the Autonomia Excel file (and optionally the Operators mapping file) to begin.")
 
