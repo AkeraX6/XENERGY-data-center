@@ -772,12 +772,25 @@ if uploaded_file is not None:
         txt_buffer = io.StringIO()
         df_out.to_csv(txt_buffer, index=False, header=False, sep="\t")
 
+        # Build date range from "tiempo incio de turno" for filename
+        try:
+            _dt_col = "tiempo incio de turno"
+            if _dt_col in df.columns:
+                _dates = pd.to_datetime(df[_dt_col], dayfirst=True, errors="coerce").dropna()
+                _oldest = _dates.min().strftime("%d%m%Y")
+                _newest = _dates.max().strftime("%d%m%Y")
+                date_tag = f"{_oldest}_{_newest}"
+            else:
+                date_tag = "unknown"
+        except Exception:
+            date_tag = "unknown"
+
         col1, col2 = st.columns(2)
         with col1:
             st.download_button(
                 "📘 Download Excel File",
                 excel_buffer,
-                file_name="Escondida_Autonomia_Cleaned.xlsx",
+                file_name=f"ES_AUTO_{date_tag}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -785,7 +798,7 @@ if uploaded_file is not None:
             st.download_button(
                 "📄 Download TXT File (no headers)",
                 txt_buffer.getvalue(),
-                file_name="Escondida_Autonomia_Cleaned.txt",
+                file_name=f"ES_AUTO_{date_tag}.txt",
                 mime="text/plain",
                 use_container_width=True
             )
