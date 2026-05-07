@@ -387,12 +387,23 @@ if uploaded_files:
     txt_buffer = io.StringIO()
     export_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
 
+    # Build date range string from the data (oldest_newest)
+    try:
+        dates = pd.to_datetime(
+            export_df[["Day", "Month", "Year"]].rename(columns={"Day": "day", "Month": "month", "Year": "year"})
+        )
+        oldest = dates.min().strftime("%d%m%Y")
+        newest = dates.max().strftime("%d%m%Y")
+        date_tag = f"{oldest}_{newest}"
+    except Exception:
+        date_tag = "unknown"
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             "📘 Download Excel",
             excel_buffer,
-            file_name="Escondida_DRONE_Cleaned.xlsx",
+            file_name=f"ES_DRONE_{date_tag}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -400,7 +411,7 @@ if uploaded_files:
         st.download_button(
             "📄 Download TXT (no headers)",
             txt_buffer.getvalue(),
-            file_name="Escondida_DRONE_Cleaned.txt",
+            file_name=f"ES_DRONE_{date_tag}.txt",
             mime="text/plain",
             use_container_width=True
         )
@@ -410,3 +421,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload Excel, CSV, or TXT file(s) to begin.")
+
