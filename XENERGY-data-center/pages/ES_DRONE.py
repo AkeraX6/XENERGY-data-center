@@ -174,6 +174,40 @@ if uploaded_files:
             else:
                 steps_done.append(f"⚠️ Column '{label}' not found.")
 
+        # STEP 3b – Clean P50: invalid/text/>50/0/empty → P80/2; if both bad → delete row
+        if "P50" in df.columns:
+            p50_bad = df["P50"].isna() | (df["P50"] == 0) | (df["P50"] > 50)
+            p50_fixed = 0
+            if "P80" in df.columns:
+                # Refill bad P50 with P80 / 2
+                can_fix = p50_bad & df["P80"].notna() & (df["P80"] > 0)
+                df.loc[can_fix, "P50"] = (df.loc[can_fix, "P80"] / 2).round(2)
+                p50_fixed = int(can_fix.sum())
+
+                # Delete rows where both P50 and P80 are still bad
+                still_bad = df["P50"].isna() | (df["P50"] == 0)
+                p80_bad = df["P80"].isna() | (df["P80"] == 0)
+                before = len(df)
+                df = df[~(still_bad & p80_bad)]
+                deleted_both = before - len(df)
+                steps_done.append(
+                    f"✅ P50: refilled {p50_fixed} invalid values with P80/2. "
+                    f"Deleted {deleted_both} rows where both P50 and P80 were empty/invalid."
+                )
+            else:
+                before = len(df)
+                df = df[~p50_bad]
+                deleted_both = before - len(df)
+                steps_done.append(f"✅ P50: removed {deleted_both} invalid rows (P80 not available for fallback).")
+
+        # STEP 3c – Clean P20: invalid/text/0/empty → P50/2
+        if "P20" in df.columns and "P50" in df.columns:
+            p20_bad = df["P20"].isna() | (df["P20"] == 0)
+            can_fix = p20_bad & df["P50"].notna() & (df["P50"] > 0)
+            df.loc[can_fix, "P20"] = (df.loc[can_fix, "P50"] / 2).round(2)
+            p20_fixed = int(can_fix.sum())
+            steps_done.append(f"✅ P20: refilled {p20_fixed} invalid values with P50/2.")
+
         # STEP 4 – Material Grueso, Intermedio, Finos: percentage → number
         for label, col_ref, out_name in [
             ("Material Grueso (>4\")", col_grueso, "Grueso"),
