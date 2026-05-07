@@ -18,12 +18,69 @@ st.markdown(
 # ==========================================================
 # FILE UPLOAD
 # ==========================================================
-uploaded_files = st.file_uploader("📂 Upload one or multiple CSV/TXT files", type=["csv", "txt"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("📂 Upload one or multiple CSV/TXT/Excel files", type=["csv", "txt", "xlsx", "xls"], accept_multiple_files=True)
 
 if uploaded_files:
     all_data = []
 
     for uploaded_file in uploaded_files:
+        fname = uploaded_file.name.lower()
+
+        # --- Excel files: read with pandas, convert rows to the same format ---
+        if fname.endswith(".xlsx") or fname.endswith(".xls"):
+            try:
+                df_excel = pd.read_excel(uploaded_file)
+            except Exception as e:
+                st.warning(f"⚠️ Could not read {uploaded_file.name}: {e}")
+                continue
+
+            # Expect columns like: ID/Shovel, Code, Timestamp, Value (or similar)
+            # Convert each row into the same dict format as CSV parsing
+            cols = list(df_excel.columns)
+            for _, row in df_excel.iterrows():
+                parts = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip()]
+                if len(parts) < 3:
+                    continue
+
+                raw_id = parts[0]
+                code = parts[1]
+                timestamp = parts[2]
+                value = parts[-1]
+
+                match = re.search(r"Shovel(\d+)", raw_id, re.IGNORECASE)
+                if match:
+                    number = int(match.group(1))
+                else:
+                    num_match = re.search(r"\b(\d+)\b", raw_id)
+                    number = int(num_match.group(1)) if num_match else None
+
+                try:
+                    dt = pd.to_datetime(timestamp, dayfirst=True, errors="coerce")
+                    if pd.isna(dt):
+                        continue
+                    day, month, year = dt.day, dt.month, dt.year
+                    hour, minute = dt.hour, dt.minute
+                except Exception:
+                    continue
+
+                try:
+                    value = float(str(value).replace(",", "."))
+                except:
+                    value = None
+
+                all_data.append({
+                    "Number": number,
+                    "Day": day,
+                    "Month": month,
+                    "Year": year,
+                    "Hour": hour,
+                    "Minute": minute,
+                    "Code": code,
+                    "Value": value
+                })
+            continue
+
+        # --- CSV / TXT files: line-by-line parsing ---
         lines = uploaded_file.read().decode("utf-8", errors="ignore").strip().splitlines()
 
         for line in lines:
@@ -191,12 +248,23 @@ if uploaded_files:
     txt_buffer = StringIO()
     df_pivot.to_csv(txt_buffer, sep="\t", index=False, header=False)
 
+    # Build date range string from the data (oldest_newest)
+    try:
+        dates = pd.to_datetime(
+            df_pivot[["Day", "Month", "Year"]].rename(columns={"Day": "day", "Month": "month", "Year": "year"})
+        )
+        oldest = dates.min().strftime("%d%m%Y")
+        newest = dates.max().strftime("%d%m%Y")
+        date_tag = f"{oldest}_{newest}"
+    except Exception:
+        date_tag = "unknown"
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             "📘 Download Excel File",
             excel_buffer,
-            file_name="ES_Fragmentation_Cleaned.xlsx",
+            file_name=f"ES_FRAG_{date_tag}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -204,11 +272,12 @@ if uploaded_files:
         st.download_button(
             "📗 Download TXT File",
             txt_buffer.getvalue(),
-            file_name="ES_Fragmentation_Cleaned.txt",
+            file_name=f"ES_FRAG_{date_tag}.txt",
             mime="text/plain",
             use_container_width=True
         )
 
 else:
     st.info("📄 Please upload one or more CSV/TXT files to begin.")
+
 
