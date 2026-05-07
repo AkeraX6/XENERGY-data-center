@@ -99,32 +99,40 @@ def transform_pozo(val):
 # CORE PROCESSING FUNCTION
 # ==========================================================
 def process_file(df):
-    """Clean one dataframe and return (cleaned_df, steps, error_msg)."""
+    """Clean one dataframe and return (cleaned_df, steps, error_msg).
+    Columns are identified by POSITION, not by name:
+      A(0)=NÐ POZO, B(1)=COORDENADA ESTE, C(2)=COORDENADA NORTE,
+      D(3)=Collar Z, E(4)=Length, F(5)=Layer Name (ignored),
+      G(6)=Blast Name, H(7)=Subdrill Length, I(8)=Burden,
+      J(9)=Spacing, K(10)=Drill Rig
+    """
     steps = []
     original_rows = len(df)
 
-    # --- Detect columns ---
-    col_pozo       = find_column(df, ["NÐ POZO", "Nº POZO", "NO POZO", "N POZO", "NPOZO", "ND POZO"])
-    col_este       = find_column(df, ["COORDENADA ESTE", "COORD ESTE", "ESTE"])
-    col_norte      = find_column(df, ["COORDENADA NORTE", "COORD NORTE", "NORTE"])
-    col_collar_z   = find_column(df, ["Collar Z", "COLLARZ", "COLLAR_Z"])
-    col_length     = find_column(df, ["Length", "LENGTH"])
-    col_blast      = find_column(df, ["Blast Name", "BLASTNAME", "BLAST_NAME"])
-    col_subdrill   = find_column(df, ["Subdrill Length", "SUBDRILLLENGTH", "SUBDRILL_LENGTH"])
-    col_burden     = find_column(df, ["Burden", "BURDEN"])
-    col_spacing    = find_column(df, ["Spacing", "SPACING"])
-    col_drill_rig  = find_column(df, ["Drill Rig", "DRILLRIG", "DRILL_RIG"])
+    # --- Validate minimum column count ---
+    if df.shape[1] < 11:
+        return None, steps, f"File has only {df.shape[1]} columns, need at least 11 (A through K)."
 
-    # Check required columns
-    missing = []
-    for name, col in [("NÐ POZO", col_pozo), ("COORDENADA ESTE", col_este),
-                       ("COORDENADA NORTE", col_norte), ("Collar Z", col_collar_z),
-                       ("Length", col_length), ("Blast Name", col_blast),
-                       ("Drill Rig", col_drill_rig)]:
-        if col is None:
-            missing.append(name)
-    if missing:
-        return None, steps, f"Missing required columns: {', '.join(missing)}"
+    # --- Map by position (use iloc columns) ---
+    cols = df.columns.tolist()
+    col_pozo      = cols[0]   # A — NÐ POZO
+    col_este      = cols[1]   # B — COORDENADA ESTE
+    col_norte     = cols[2]   # C — COORDENADA NORTE
+    col_collar_z  = cols[3]   # D — Collar Z
+    col_length    = cols[4]   # E — Length
+    # cols[5] = Layer Name (ignored)
+    col_blast     = cols[6]   # G — Blast Name
+    col_subdrill  = cols[7]   # H — Subdrill Length
+    col_burden    = cols[8]   # I — Burden
+    col_spacing   = cols[9]   # J — Spacing
+    col_drill_rig = cols[10]  # K — Drill Rig
+
+    steps.append(
+        f"🔎 Columns mapped by position: "
+        f"A={col_pozo}, B={col_este}, C={col_norte}, D={col_collar_z}, "
+        f"E={col_length}, G={col_blast}, H={col_subdrill}, I={col_burden}, "
+        f"J={col_spacing}, K={col_drill_rig}"
+    )
 
     # STEP 1 — NÐ POZO: transform prefix codes
     df["NÐ POZO"] = df[col_pozo].apply(transform_pozo)
