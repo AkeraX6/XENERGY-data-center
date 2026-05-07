@@ -158,11 +158,17 @@ if uploaded_files:
         else:
             steps_done.append("⚠️ Column 'Fecha' not found — Day/Month/Year not created.")
 
-        # STEP 2 – PALA: extract numeric (SHE0073 → 73)
+        # STEP 2 – PALA: extract numeric (SHE0073 → 73), delete rows with empty Pala
         if col_pala is not None:
             df["Pala"] = df[col_pala].astype(str).str.extract(r"(\d+)", expand=False)
             df["Pala"] = pd.to_numeric(df["Pala"], errors="coerce")
-            steps_done.append(f"✅ PALA (from '{col_pala}'): extracted numeric (SHE0073 → 73).")
+            before = len(df)
+            df = df[df["Pala"].notna()]
+            deleted_pala = before - len(df)
+            steps_done.append(
+                f"✅ PALA (from '{col_pala}'): extracted numeric (SHE0073 → 73). "
+                f"Deleted {deleted_pala} rows with empty/invalid Pala."
+            )
         else:
             steps_done.append("⚠️ Column 'PALA' not found.")
 
@@ -246,6 +252,17 @@ if uploaded_files:
                 steps_done.append(f"✅ {label} (from '{col_ref}'): percentage → number (40% → 40).")
             else:
                 steps_done.append(f"⚠️ Column '{label}' not found.")
+
+        # STEP 4b – Fill empty Grueso/Intermedio/Finos with 0
+        filled_counts = []
+        for mat_col in ["Grueso", "Intermedio", "Finos"]:
+            if mat_col in df.columns:
+                n_empty = int(df[mat_col].isna().sum())
+                if n_empty > 0:
+                    df[mat_col] = df[mat_col].fillna(0)
+                    filled_counts.append(f"{mat_col}: {n_empty}")
+        if filled_counts:
+            steps_done.append(f"✅ Filled empty values with 0: {', '.join(filled_counts)}.")
 
         # STEP 5 – Delete rows where all key values are empty
         key_cols = [c for c in ["Pala", "P80", "P50", "P20", "Grueso", "Intermedio", "Finos"] if c in df.columns]
