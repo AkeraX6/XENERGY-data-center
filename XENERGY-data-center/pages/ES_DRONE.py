@@ -174,6 +174,33 @@ if uploaded_files:
             else:
                 steps_done.append(f"⚠️ Column '{label}' not found.")
 
+        # STEP 3a – Clean P80: empty → P50*2, else P20*4, else 0
+        if "P80" in df.columns:
+            p80_bad = df["P80"].isna() | (df["P80"] == 0)
+            p80_fixed = 0
+
+            # First try: P80 = P50 * 2
+            if "P50" in df.columns:
+                fix1 = p80_bad & df["P50"].notna() & (df["P50"] > 0)
+                df.loc[fix1, "P80"] = (df.loc[fix1, "P50"] * 2).round(2)
+                p80_fixed += int(fix1.sum())
+                p80_bad = df["P80"].isna() | (df["P80"] == 0)
+
+            # Second try: P80 = P20 * 4
+            if "P20" in df.columns:
+                fix2 = p80_bad & df["P20"].notna() & (df["P20"] > 0)
+                df.loc[fix2, "P80"] = (df.loc[fix2, "P20"] * 4).round(2)
+                p80_fixed += int(fix2.sum())
+                p80_bad = df["P80"].isna() | (df["P80"] == 0)
+
+            # Remaining: fill with 0
+            still_empty = int(p80_bad.sum())
+            df["P80"] = df["P80"].fillna(0)
+            steps_done.append(
+                f"✅ P80: refilled {p80_fixed} empty values (P50×2 then P20×4). "
+                f"{still_empty} remaining set to 0."
+            )
+
         # STEP 3b – Clean P50: invalid/text/>50/0/empty → P80/2; if both bad → delete row
         if "P50" in df.columns:
             p50_bad = df["P50"].isna() | (df["P50"] == 0) | (df["P50"] > 50)
