@@ -318,6 +318,17 @@ if uploaded_files:
         st.markdown("---")
         st.subheader("💾 Export Cleaned File")
 
+        # Build date range string from the data (oldest_newest)
+        try:
+            dates = pd.to_datetime(
+                export_df[["Dia", "Mes", "Año"]].rename(columns={"Dia": "day", "Mes": "month", "Año": "year"})
+            )
+            oldest = dates.min().strftime("%d%m%Y")
+            newest = dates.max().strftime("%d%m%Y")
+            date_tag = f"{oldest}_{newest}"
+        except Exception:
+            date_tag = "unknown"
+
         # Excel (with headers)
         excel_buffer = io.BytesIO()
         export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
@@ -332,7 +343,7 @@ if uploaded_files:
             st.download_button(
                 "📘 Download Excel",
                 excel_buffer,
-                file_name="Escondida_POSP_Cleaned.xlsx",
+                file_name=f"ES_POSP_{date_tag}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
@@ -340,7 +351,7 @@ if uploaded_files:
             st.download_button(
                 "📄 Download TXT (no headers)",
                 txt_buffer.getvalue(),
-                file_name="Escondida_POSP_Cleaned.txt",
+                file_name=f"ES_POSP_{date_tag}.txt",
                 mime="text/plain",
                 use_container_width=True,
             )
@@ -352,3 +363,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
