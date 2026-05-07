@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+from datetime import date
 
 # ==========================================================
 # PAGE HEADER
@@ -534,12 +535,14 @@ if uploaded_files:
 
     st.markdown("---")
 
+    today = date.today().strftime("%Y-%m-%d")
+
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             "📘 Download Excel File",
             excel_buffer,
-            file_name="Escondida_QAQC_Cleaned_Merged.xlsx",
+            file_name=f"BC_QAQC_{today}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -547,7 +550,7 @@ if uploaded_files:
         st.download_button(
             "📄 Download TXT File",
             txt_buffer.getvalue(),
-            file_name="Escondida_QAQC_Cleaned_Merged.txt",
+            file_name=f"BC_QAQC_{today}.txt",
             mime="text/plain",
             use_container_width=True
         )
