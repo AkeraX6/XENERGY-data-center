@@ -328,25 +328,37 @@ st.success(f"✅ Final dataset: {len(df)} rows × {len(df.columns)} columns.")
 st.markdown("---")
 st.subheader("💾 Export Cleaned File")
 
-option = st.radio("Choose download option:", ["⬇️ Download All Columns", "🧩 Download Selected Columns"])
+# Define export column order
+txt_columns = [
+    "Expansion", "Level", "Borehole", "Local X (Design)", "Local Y (Design)",
+    "Diameter (Design)", "Density", "Hole Length (Design)", "Hole Length (Actual)",
+    "Explosive (kg) (Design)", "Explosive (kg) (Actual)", "Stemming (Design)",
+    "Stemming (Actual)", "Burden (Design)", "Spacing (Design)", "Subdrill (Design)",
+    "Water Presence", "Water level", "Asset"
+]
+excel_columns = ["Blast"] + txt_columns
 
-if option == "⬇️ Download All Columns":
-    export_df = df
-else:
-    selected_columns = st.multiselect(
-        "Select columns (drag to reorder):",
-        options=list(df.columns),
-        default=[]
-    )
-    export_df = df[selected_columns] if selected_columns else df
+# Filter to columns that exist in the dataframe
+txt_cols_avail = [c for c in txt_columns if c in df.columns]
+excel_cols_avail = [c for c in excel_columns if c in df.columns]
 
-# --- Export Files ---
+# Build export dataframes and clean: replace "-" and empty with 0
+export_excel = df[excel_cols_avail].copy()
+export_txt = df[txt_cols_avail].copy()
+
+for tmp_df in [export_excel, export_txt]:
+    for col in tmp_df.columns:
+        tmp_df[col] = tmp_df[col].replace("-", 0)
+        tmp_df[col] = tmp_df[col].fillna(0)
+
+# --- Excel: with headers ---
 excel_buffer = io.BytesIO()
-export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+export_excel.to_excel(excel_buffer, index=False, engine="openpyxl")
 excel_buffer.seek(0)
 
+# --- TXT: no headers ---
 txt_buffer = io.StringIO()
-export_df.to_csv(txt_buffer, index=False, header=False, sep="\t")
+export_txt.to_csv(txt_buffer, index=False, header=False, sep="\t")
 
 file_base = f"DGM_QAQC_Cleaned{file_suffix}"
 
@@ -375,7 +387,7 @@ st.markdown("---")
 st.subheader("🔍 Data Quality Check")
 
 if st.button("▶️ Run Quality Check", use_container_width=True, key="dgm_qaqc_qc"):
-    total_rows = len(export_df)
+    total_rows = len(export_excel)
 
     if total_rows == 0:
         st.error("❌ No data to check — the dataset is empty after cleaning.")
@@ -383,14 +395,14 @@ if st.button("▶️ Run Quality Check", use_container_width=True, key="dgm_qaqc
         issues_found = False
         report_lines = []
 
-        for col in export_df.columns:
+        for col in export_excel.columns:
             col_issues = []
 
-            empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+            empty_count = int(export_excel[col].isna().sum() + (export_excel[col].astype(str).str.strip() == "").sum())
             if empty_count > 0:
                 col_issues.append(f"**{empty_count}** empty value(s)")
 
-            non_empty = export_df[col].dropna().astype(str).str.strip()
+            non_empty = export_excel[col].dropna().astype(str).str.strip()
             non_empty = non_empty[non_empty != ""]
 
             if len(non_empty) > 0:
