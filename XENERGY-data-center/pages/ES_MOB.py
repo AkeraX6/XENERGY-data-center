@@ -228,16 +228,25 @@ if uploaded_file is not None:
             
             # STEP 4 – Add Expansion column
             if expansion_number is not None:
-                output_df['Expansion'] = expansion_number
+                output_df['exp'] = expansion_number
                 steps_done.append(f"✅ Expansion number extracted from filename: {expansion_number}")
             else:
-                output_df['Expansion'] = pd.NA
+                output_df['exp'] = pd.NA
                 steps_done.append(f"⚠️ Could not extract expansion number from filename: {filename}")
             
             # STEP 5 – Add Month and Year columns
-            output_df['Month'] = month_num if month_num else pd.NA
-            output_df['Year'] = year_num if year_num else pd.NA
-            steps_done.append(f"✅ Added Month and Year columns to output.")
+            output_df['Mes'] = month_num if month_num else pd.NA
+            output_df['Año'] = year_num if year_num else pd.NA
+            steps_done.append(f"✅ Added Mes and Año columns to output.")
+            
+            # STEP 6 – Reorder columns to final layout
+            final_order = [
+                'exp', 'centroid_x', 'centroid_y', 'centroid_z', 'litologia', 'alteracion',
+                'ucs', 'gsi', 'ff', 'rqd', 'mtype_op', 'cut', 'spi', 'bwi', 'Mes', 'Año'
+            ]
+            final_order_avail = [c for c in final_order if c in output_df.columns]
+            output_df = output_df[final_order_avail]
+            steps_done.append(f"✅ Columns reordered to final layout ({len(final_order_avail)} columns).")
             
             # Display all steps
             for step in steps_done:
@@ -269,9 +278,9 @@ if uploaded_file is not None:
         output_df.to_excel(excel_buffer, index=False, engine="openpyxl")
         excel_buffer.seek(0)
         
-        # Prepare CSV download
-        csv_buffer = io.StringIO()
-        output_df.to_csv(csv_buffer, index=False)
+        # Prepare TXT download (no headers)
+        txt_buffer = io.StringIO()
+        output_df.to_csv(txt_buffer, index=False, header=False, sep="\t")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -284,12 +293,68 @@ if uploaded_file is not None:
             )
         with col2:
             st.download_button(
-                "📗 Download CSV File",
-                csv_buffer.getvalue(),
-                file_name=f"{base_filename}_cleaned.csv",
-                mime="text/csv",
+                "📄 Download TXT File",
+                txt_buffer.getvalue(),
+                file_name=f"{base_filename}_cleaned.txt",
+                mime="text/plain",
                 use_container_width=True
             )
+        
+        # ==========================================================
+        # DATA QUALITY CHECK
+        # ==========================================================
+        st.markdown("---")
+        st.subheader("🔍 Data Quality Check")
+
+        if st.button("▶️ Run Quality Check", use_container_width=True, key="es_mob_qc"):
+            total_rows = len(output_df)
+
+            if total_rows == 0:
+                st.error("❌ No data to check — the dataset is empty after cleaning.")
+            else:
+                issues_found = False
+                report_lines = []
+
+                for col in output_df.columns:
+                    col_issues = []
+
+                    empty_count = int(output_df[col].isna().sum() + (output_df[col].astype(str).str.strip() == "").sum())
+                    if empty_count > 0:
+                        col_issues.append(f"**{empty_count}** empty value(s)")
+
+                    non_empty = output_df[col].dropna().astype(str).str.strip()
+                    non_empty = non_empty[non_empty != ""]
+
+                    if len(non_empty) > 0:
+                        text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+                        text_count = int(text_mask.sum())
+                    else:
+                        text_count = 0
+                    if text_count > 0:
+                        col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+                    if len(non_empty) > 0:
+                        special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
+                        special_count = int(special_mask.sum())
+                    else:
+                        special_count = 0
+                    if special_count > 0:
+                        examples = non_empty[special_mask].head(3).tolist()
+                        col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+                    if col_issues:
+                        issues_found = True
+                        report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+                    else:
+                        report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+                if not issues_found:
+                    st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+                else:
+                    st.warning("⚠️ Some columns have issues. Review the report below:")
+
+                for line in report_lines:
+                    st.markdown(line)
         
         st.markdown("<hr>", unsafe_allow_html=True)
         st.caption("Built by Maxam - Omar El Kendi")
