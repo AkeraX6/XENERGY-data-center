@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 
 # ======================================================
 # PAGE HEADER
@@ -123,8 +124,8 @@ excel_buf = io.BytesIO()
 result.to_excel(excel_buf, index=False, engine="openpyxl")
 excel_buf.seek(0)
 
-csv_buf = io.StringIO()
-result.to_csv(csv_buf, index=False)
+txt_buf = io.StringIO()
+result.to_csv(txt_buf, index=False, header=False, sep="\t")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -137,10 +138,67 @@ with col1:
     )
 with col2:
     st.download_button(
-        "📗 Download CSV",
-        data=csv_buf.getvalue(),
-        file_name="DGM_Excavator_Output.csv",
-        mime="text/csv",
+        "📄 Download TXT",
+        data=txt_buf.getvalue(),
+        file_name="DGM_Excavator_Output.txt",
+        mime="text/plain",
         use_container_width=True,
     )
+
+# ======================================================
+# DATA QUALITY CHECK
+# ======================================================
+st.markdown("---")
+st.subheader("🔍 Data Quality Check")
+
+if st.button("▶️ Run Quality Check", use_container_width=True, key="dgm_exca_qc"):
+    total_rows = len(result)
+
+    if total_rows == 0:
+        st.error("❌ No data to check — the dataset is empty after cleaning.")
+    else:
+        issues_found = False
+        report_lines = []
+
+        for col in result.columns:
+            col_issues = []
+
+            empty_count = int(result[col].isna().sum() + (result[col].astype(str).str.strip() == "").sum())
+            if empty_count > 0:
+                col_issues.append(f"**{empty_count}** empty value(s)")
+
+            non_empty = result[col].dropna().astype(str).str.strip()
+            non_empty = non_empty[non_empty != ""]
+
+            if len(non_empty) > 0:
+                text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+                text_count = int(text_mask.sum())
+            else:
+                text_count = 0
+            if text_count > 0:
+                col_issues.append(f"**{text_count}** cell(s) contain text/letters")
+
+            if len(non_empty) > 0:
+                special_mask = non_empty.apply(lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x))))
+                special_count = int(special_mask.sum())
+            else:
+                special_count = 0
+            if special_count > 0:
+                examples = non_empty[special_mask].head(3).tolist()
+                col_issues.append(f"**{special_count}** cell(s) with special characters (e.g. {examples})")
+
+            if col_issues:
+                issues_found = True
+                report_lines.append(f"⚠️ **{col}**: " + " | ".join(col_issues))
+            else:
+                report_lines.append(f"✅ **{col}**: OK ({total_rows} values, all numeric)")
+
+        if not issues_found:
+            st.success("✅ All columns are clean — no empty values, no text, no special characters. Ready to download!")
+        else:
+            st.warning("⚠️ Some columns have issues. Review the report below:")
+
+        for line in report_lines:
+            st.markdown(line)
+
 
