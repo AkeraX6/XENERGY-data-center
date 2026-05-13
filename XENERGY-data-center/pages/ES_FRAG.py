@@ -55,7 +55,7 @@ if uploaded_files:
                     number = int(num_match.group(1)) if num_match else None
 
                 try:
-                    dt = pd.to_datetime(timestamp, dayfirst=True, errors="coerce")
+                    dt = pd.to_datetime(timestamp, dayfirst=('/' in timestamp), errors="coerce")
                     if pd.isna(dt):
                         continue
                     day, month, year = dt.day, dt.month, dt.year
@@ -119,7 +119,7 @@ if uploaded_files:
 
             # ✅ Parse timestamp
             try:
-                dt = pd.to_datetime(timestamp, dayfirst=True, errors="coerce")
+                dt = pd.to_datetime(timestamp, dayfirst=('/' in timestamp), errors="coerce")
                 if pd.isna(dt):
                     continue
                 day, month, year = dt.day, dt.month, dt.year
@@ -279,5 +279,3 @@ if uploaded_files:
 
 else:
     st.info("📄 Please upload one or more CSV/TXT files to begin.")
-
-
