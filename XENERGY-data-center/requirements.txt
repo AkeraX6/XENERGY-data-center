@@ -3,3 +3,4 @@ pandas
 openpyxl
 pillow
 unicodedata2
+plotly
