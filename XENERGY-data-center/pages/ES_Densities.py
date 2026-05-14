@@ -122,28 +122,56 @@ def get_color_map(densities: list, custom_colors: dict) -> dict:
 
 
 def build_figure(df: pd.DataFrame, color_map: dict) -> go.Figure:
-    """Build a Plotly scatter figure colored by New_Density."""
+    """Build a Plotly scatter figure colored by New_Density. Stars for Mineral, dots for Lastre."""
     fig = go.Figure()
 
     for density_val in sorted(df["New_Density"].dropna().unique()):
         sub = df[df["New_Density"] == density_val]
         color = color_map.get(density_val, "#888888")
-        fig.add_trace(go.Scatter(
-            x=sub["Coord_Este"],
-            y=sub["Coord_Norte"],
-            mode="markers",
-            name=f"Density {density_val}",
-            marker=dict(size=7, color=color, line=dict(width=0.5, color="#333")),
-            customdata=sub[["Hole_ID", "Blast_Name", "Original_Density", "New_Density"]].values,
-            hovertemplate=(
-                "<b>Hole:</b> %{customdata[0]}<br>"
-                "<b>Blast:</b> %{customdata[1]}<br>"
-                "<b>Este:</b> %{x:.1f}<br>"
-                "<b>Norte:</b> %{y:.1f}<br>"
-                "<b>Original:</b> %{customdata[2]}<br>"
-                "<b>Current:</b> %{customdata[3]}<extra></extra>"
-            ),
-        ))
+
+        # Split by material type: Lastre (Extra==1) = circle, Mineral (Extra==2) = star
+        lastre = sub[sub["Extra"] != 2]
+        mineral = sub[sub["Extra"] == 2]
+
+        if len(lastre) > 0:
+            fig.add_trace(go.Scatter(
+                x=lastre["Coord_Este"],
+                y=lastre["Coord_Norte"],
+                mode="markers",
+                name=f"Density {density_val}",
+                legendgroup=f"d_{density_val}",
+                marker=dict(size=7, symbol="circle", color=color, line=dict(width=0.5, color="#333")),
+                customdata=lastre[["Hole_ID", "Blast_Name", "Original_Density", "New_Density"]].values,
+                hovertemplate=(
+                    "<b>Hole:</b> %{customdata[0]}<br>"
+                    "<b>Blast:</b> %{customdata[1]}<br>"
+                    "<b>Este:</b> %{x:.1f}<br>"
+                    "<b>Norte:</b> %{y:.1f}<br>"
+                    "<b>Original:</b> %{customdata[2]}<br>"
+                    "<b>Current:</b> %{customdata[3]}<br>"
+                    "<b>Type:</b> Lastre<extra></extra>"
+                ),
+            ))
+
+        if len(mineral) > 0:
+            fig.add_trace(go.Scatter(
+                x=mineral["Coord_Este"],
+                y=mineral["Coord_Norte"],
+                mode="markers",
+                name=f"Density {density_val} ★",
+                legendgroup=f"d_{density_val}",
+                marker=dict(size=9, symbol="star", color=color, line=dict(width=0.5, color="#333")),
+                customdata=mineral[["Hole_ID", "Blast_Name", "Original_Density", "New_Density"]].values,
+                hovertemplate=(
+                    "<b>Hole:</b> %{customdata[0]}<br>"
+                    "<b>Blast:</b> %{customdata[1]}<br>"
+                    "<b>Este:</b> %{x:.1f}<br>"
+                    "<b>Norte:</b> %{y:.1f}<br>"
+                    "<b>Original:</b> %{customdata[2]}<br>"
+                    "<b>Current:</b> %{customdata[3]}<br>"
+                    "<b>Type:</b> Mineral<extra></extra>"
+                ),
+            ))
 
     fig.update_layout(
         xaxis_title="Coord Este",
@@ -479,5 +507,6 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
+
 
 
