@@ -15,11 +15,24 @@ COLUMN_NAMES = [
 ]
 
 # Default color palette for density values
-DEFAULT_COLORS = [
-    "#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-    "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
-]
+DENSITY_OPTIONS = [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.33, 1.35, 1.40]
+
+DENSITY_COLORS = {
+    0.80: "#1f77b4",  # blue
+    0.85: "#17becf",  # cyan
+    0.90: "#2ca02c",  # green
+    0.95: "#98df8a",  # light green
+    1.00: "#bcbd22",  # olive
+    1.05: "#ff7f0e",  # orange
+    1.10: "#ffbb78",  # light orange
+    1.15: "#d62728",  # red
+    1.20: "#9467bd",  # purple
+    1.25: "#e377c2",  # pink
+    1.30: "#8c564b",  # brown
+    1.33: "#636EFA",  # indigo
+    1.35: "#EF553B",  # coral
+    1.40: "#7f7f7f",  # gray
+}
 
 # ==========================================================
 # HEADER
@@ -89,16 +102,17 @@ def load_file(uploaded_file) -> tuple[pd.DataFrame, str]:
 
 
 def get_color_map(densities: list, custom_colors: dict) -> dict:
-    """Return a density → color mapping, using custom overrides where available."""
+    """Return a density → color mapping, using fixed DENSITY_COLORS."""
     color_map = {}
-    idx = 0
     for d in sorted(densities):
         key = str(d)
         if key in custom_colors:
             color_map[d] = custom_colors[key]
+        elif d in DENSITY_COLORS:
+            color_map[d] = DENSITY_COLORS[d]
         else:
-            color_map[d] = DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
-            idx += 1
+            # For unexpected density values, pick a fallback
+            color_map[d] = "#888888"
     return color_map
 
 
@@ -174,17 +188,42 @@ st.success(f"✅ Loaded {len(df)} holes  |  {df['New_Density'].nunique()} unique
 # ==========================================================
 st.sidebar.header("🎨 Editing Controls")
 
-# --- Target density ---
-unique_densities = sorted(df["New_Density"].dropna().unique().tolist())
-st.sidebar.subheader("Target Density")
-target_density = st.sidebar.number_input(
-    "Density value to assign",
-    value=unique_densities[0] if unique_densities else 1.2,
-    step=0.1,
-    format="%.2f",
-)
+# --- Target density selector with colored buttons ---
+st.sidebar.subheader("Select Target Density")
+
+# Initialize target density in session state
+if "target_density" not in st.session_state:
+    st.session_state["target_density"] = 1.20
+
+# Build colored button grid (2 columns)
+for i in range(0, len(DENSITY_OPTIONS), 2):
+    cols = st.sidebar.columns(2)
+    for j, col_widget in enumerate(cols):
+        idx = i + j
+        if idx < len(DENSITY_OPTIONS):
+            d = DENSITY_OPTIONS[idx]
+            color = DENSITY_COLORS.get(d, "#888888")
+            is_selected = (st.session_state["target_density"] == d)
+            border = "3px solid white" if is_selected else "1px solid #555"
+            label = f"● {d}" if is_selected else f"{d}"
+            with col_widget:
+                # Show colored indicator + button
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:2px;'>"
+                    f"<div style='width:14px;height:14px;border-radius:50%;background:{color};border:{border};'></div>"
+                    f"<span style='font-size:13px;font-weight:{'700' if is_selected else '400'};'>{d}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button(f"{'\u2714' if is_selected else ''} {d}", key=f"density_btn_{d}", use_container_width=True):
+                    st.session_state["target_density"] = d
+                    st.rerun()
+
+target_density = st.session_state["target_density"]
+st.sidebar.markdown(f"**Active: {target_density}**")
 
 # --- Color pickers ---
+unique_densities = sorted(df["New_Density"].dropna().unique().tolist())
 st.sidebar.subheader("Color Map")
 color_map = get_color_map(unique_densities, custom_colors)
 for d in unique_densities:
@@ -383,3 +422,4 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
+
