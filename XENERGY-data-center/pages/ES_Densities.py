@@ -152,6 +152,42 @@ def build_figure(df: pd.DataFrame, color_map: dict) -> go.Figure:
     return fig
 
 
+def build_material_figure(df: pd.DataFrame) -> go.Figure:
+    """Build a read-only scatter colored by material type (Extra column): 1=Lastre, 2=Mineral."""
+    MATERIAL_MAP = {1: ("Lastre", "#2962FF"), 2: ("Mineral", "#D50000")}
+    fig = go.Figure()
+
+    for val in sorted(df["Extra"].dropna().unique()):
+        sub = df[df["Extra"] == val]
+        label, color = MATERIAL_MAP.get(int(val), (f"Type {val}", "#888888"))
+        fig.add_trace(go.Scatter(
+            x=sub["Coord_Este"],
+            y=sub["Coord_Norte"],
+            mode="markers",
+            name=label,
+            marker=dict(size=7, color=color, line=dict(width=0.5, color="#333")),
+            customdata=sub[["Hole_ID", "Blast_Name"]].values,
+            hovertemplate=(
+                "<b>Hole:</b> %{customdata[0]}<br>"
+                "<b>Blast:</b> %{customdata[1]}<br>"
+                "<b>Este:</b> %{x:.1f}<br>"
+                "<b>Norte:</b> %{y:.1f}<br>"
+                f"<b>Type:</b> {label}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        xaxis_title="Coord Este",
+        yaxis_title="Coord Norte",
+        yaxis=dict(scaleanchor="x", scaleratio=1),
+        legend_title="Material",
+        margin=dict(l=40, r=20, t=30, b=40),
+        height=700,
+        dragmode=False,
+    )
+    return fig
+
+
 # ==========================================================
 # FILE UPLOAD
 # ==========================================================
@@ -300,55 +336,61 @@ with st.expander("🎨 Customize Colors", expanded=False):
 st.markdown("---")
 
 # ==========================================================
-# SCATTER PLOT
+# SCATTER PLOTS (Density Editor + Material Reference)
 # ==========================================================
-st.subheader("📊 Drill Hole Map")
+graph_left, graph_right = st.columns(2)
 
 fig = build_figure(df, color_map)
+fig_material = build_material_figure(df)
 
-if edit_mode == "Lasso / Box Select":
-    event = st.plotly_chart(
-        fig,
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode=["points", "box", "lasso"],
-        key="density_plot",
-    )
+with graph_left:
+    st.subheader("📊 Density Map (editable)")
+    if edit_mode == "Lasso / Box Select":
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode=["points", "box", "lasso"],
+            key="density_plot",
+        )
 
-    # Process selection
-    if event and event.selection and event.selection.points:
-        selected_points = event.selection.points
-        updated_count = 0
+        # Process selection
+        if event and event.selection and event.selection.points:
+            selected_points = event.selection.points
+            updated_count = 0
 
-        for pt in selected_points:
-            # Match by coordinates
-            pt_x = pt.get("x")
-            pt_y = pt.get("y")
-            if pt_x is None or pt_y is None:
-                continue
+            for pt in selected_points:
+                pt_x = pt.get("x")
+                pt_y = pt.get("y")
+                if pt_x is None or pt_y is None:
+                    continue
 
-            mask = (
-                (df["Coord_Este"] == pt_x) &
-                (df["Coord_Norte"] == pt_y) &
-                (df["New_Density"] != target_density)
-            )
-            affected = df.loc[mask]
-            for idx_row in affected.index:
-                changes_log.append({
-                    "Hole_ID": df.at[idx_row, "Hole_ID"],
-                    "Old_Density": df.at[idx_row, "New_Density"],
-                    "New_Density": target_density,
-                    "Timestamp": datetime.now().strftime("%H:%M:%S"),
-                })
-                df.at[idx_row, "New_Density"] = target_density
-                updated_count += 1
+                mask = (
+                    (df["Coord_Este"] == pt_x) &
+                    (df["Coord_Norte"] == pt_y) &
+                    (df["New_Density"] != target_density)
+                )
+                affected = df.loc[mask]
+                for idx_row in affected.index:
+                    changes_log.append({
+                        "Hole_ID": df.at[idx_row, "Hole_ID"],
+                        "Old_Density": df.at[idx_row, "New_Density"],
+                        "New_Density": target_density,
+                        "Timestamp": datetime.now().strftime("%H:%M:%S"),
+                    })
+                    df.at[idx_row, "New_Density"] = target_density
+                    updated_count += 1
 
-        if updated_count > 0:
-            st.session_state["density_df"] = df
-            st.toast(f"Updated {updated_count} hole(s) to density {target_density}")
-            st.rerun()
-else:
-    st.plotly_chart(fig, use_container_width=True, key="density_plot_range")
+            if updated_count > 0:
+                st.session_state["density_df"] = df
+                st.toast(f"Updated {updated_count} hole(s) to density {target_density}")
+                st.rerun()
+    else:
+        st.plotly_chart(fig, use_container_width=True, key="density_plot_range")
+
+with graph_right:
+    st.subheader("🪨 Lastre / Mineral")
+    st.plotly_chart(fig_material, use_container_width=True, key="material_plot")
 
 # ==========================================================
 # DATA PREVIEW
@@ -432,4 +474,5 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
+
 
