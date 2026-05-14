@@ -18,20 +18,20 @@ COLUMN_NAMES = [
 DENSITY_OPTIONS = [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.33, 1.35, 1.40]
 
 DENSITY_COLORS = {
-    0.80: "#1f77b4",  # blue
-    0.85: "#17becf",  # cyan
-    0.90: "#2ca02c",  # green
-    0.95: "#98df8a",  # light green
-    1.00: "#bcbd22",  # olive
-    1.05: "#ff7f0e",  # orange
-    1.10: "#ffbb78",  # light orange
-    1.15: "#d62728",  # red
-    1.20: "#9467bd",  # purple
-    1.25: "#e377c2",  # pink
-    1.30: "#8c564b",  # brown
-    1.33: "#636EFA",  # indigo
-    1.35: "#EF553B",  # coral
-    1.40: "#7f7f7f",  # gray
+    0.80: "#00C853",  # bright green
+    0.85: "#76FF03",  # lime green
+    0.90: "#C6FF00",  # yellow-green
+    0.95: "#FFD600",  # gold / yellow
+    1.00: "#FF9100",  # orange
+    1.05: "#FF3D00",  # red-orange
+    1.10: "#D50000",  # red
+    1.15: "#AA00FF",  # purple
+    1.20: "#2962FF",  # blue
+    1.25: "#00B0FF",  # light blue
+    1.30: "#795548",  # brown
+    1.33: "#00695C",  # teal
+    1.35: "#78909C",  # blue-gray
+    1.40: "#37474F",  # dark gray
 }
 
 # ==========================================================
@@ -432,5 +432,4 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
-
 
