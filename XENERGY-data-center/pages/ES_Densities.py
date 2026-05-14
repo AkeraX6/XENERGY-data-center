@@ -184,110 +184,120 @@ custom_colors = st.session_state["density_custom_colors"]
 st.success(f"✅ Loaded {len(df)} holes  |  {df['New_Density'].nunique()} unique density values")
 
 # ==========================================================
-# SIDEBAR CONTROLS
+# EDITING CONTROLS (in main area — sidebar is hidden)
 # ==========================================================
-st.sidebar.header("🎨 Editing Controls")
-
-# --- Target density selector with colored buttons ---
-st.sidebar.subheader("Select Target Density")
 
 # Initialize target density in session state
 if "target_density" not in st.session_state:
     st.session_state["target_density"] = 1.20
 
-# Build colored button grid (2 columns)
-for i in range(0, len(DENSITY_OPTIONS), 2):
-    cols = st.sidebar.columns(2)
-    for j, col_widget in enumerate(cols):
-        idx = i + j
-        if idx < len(DENSITY_OPTIONS):
-            d = DENSITY_OPTIONS[idx]
-            color = DENSITY_COLORS.get(d, "#888888")
-            is_selected = (st.session_state["target_density"] == d)
-            border = "3px solid white" if is_selected else "1px solid #555"
-            label = f"● {d}" if is_selected else f"{d}"
-            with col_widget:
-                # Show colored indicator + button
-                st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:6px;margin-bottom:2px;'>"
-                    f"<div style='width:14px;height:14px;border-radius:50%;background:{color};border:{border};'></div>"
-                    f"<span style='font-size:13px;font-weight:{'700' if is_selected else '400'};'>{d}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-                if st.button(f"{'\u2714' if is_selected else ''} {d}", key=f"density_btn_{d}", use_container_width=True):
-                    st.session_state["target_density"] = d
-                    st.rerun()
+# --- Target density selector with colored buttons ---
+st.subheader("🎨 Select Target Density")
+
+# Build colored button grid — 7 columns per row
+btn_cols = st.columns(7)
+for idx, d in enumerate(DENSITY_OPTIONS):
+    color = DENSITY_COLORS.get(d, "#888888")
+    is_selected = (st.session_state["target_density"] == d)
+    border = "3px solid #fff" if is_selected else "1px solid #555"
+    bg = color if is_selected else "transparent"
+    text_color = "#fff" if is_selected else color
+    with btn_cols[idx % 7]:
+        st.markdown(
+            f"<div style='text-align:center;margin-bottom:2px;'>"
+            f"<div style='width:18px;height:18px;border-radius:50%;background:{color};border:{border};"
+            f"margin:0 auto;'></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            f"{'✔ ' if is_selected else ''}{d}",
+            key=f"density_btn_{d}",
+            use_container_width=True,
+        ):
+            st.session_state["target_density"] = d
+            st.rerun()
 
 target_density = st.session_state["target_density"]
-st.sidebar.markdown(f"**Active: {target_density}**")
-
-# --- Color pickers ---
-unique_densities = sorted(df["New_Density"].dropna().unique().tolist())
-st.sidebar.subheader("Color Map")
-color_map = get_color_map(unique_densities, custom_colors)
-for d in unique_densities:
-    key = str(d)
-    current_color = color_map.get(d, "#888888")
-    new_color = st.sidebar.color_picker(f"Density {d}", value=current_color, key=f"cp_{d}")
-    if new_color != current_color:
-        custom_colors[key] = new_color
-        color_map[d] = new_color
-
-# --- Edit mode ---
-st.sidebar.subheader("Edit Mode")
-edit_mode = st.sidebar.radio(
-    "Select mode",
-    ["Lasso / Box Select", "Range (X/Y bounds)"],
-    index=0,
+active_color = DENSITY_COLORS.get(target_density, "#888888")
+st.markdown(
+    f"**Active density:** <span style='color:{active_color};font-size:18px;font-weight:700;'>"
+    f"● {target_density}</span>",
+    unsafe_allow_html=True,
 )
 
-# --- Range inputs ---
-if edit_mode == "Range (X/Y bounds)":
-    st.sidebar.markdown("---")
-    x_min = st.sidebar.number_input("X min", value=float(df["Coord_Este"].min()), format="%.1f")
-    x_max = st.sidebar.number_input("X max", value=float(df["Coord_Este"].max()), format="%.1f")
-    y_min = st.sidebar.number_input("Y min", value=float(df["Coord_Norte"].min()), format="%.1f")
-    y_max = st.sidebar.number_input("Y max", value=float(df["Coord_Norte"].max()), format="%.1f")
-
-    if st.sidebar.button("Apply Range Edit", use_container_width=True):
-        mask = (
-            (df["Coord_Este"] >= x_min) & (df["Coord_Este"] <= x_max) &
-            (df["Coord_Norte"] >= y_min) & (df["Coord_Norte"] <= y_max) &
-            (df["New_Density"] != target_density)
-        )
-        affected = df.loc[mask]
-        if len(affected) > 0:
-            for idx_row in affected.index:
-                changes_log.append({
-                    "Hole_ID": df.at[idx_row, "Hole_ID"],
-                    "Old_Density": df.at[idx_row, "New_Density"],
-                    "New_Density": target_density,
-                    "Timestamp": datetime.now().strftime("%H:%M:%S"),
-                })
-            df.loc[mask, "New_Density"] = target_density
-            st.session_state["density_df"] = df
-            st.sidebar.success(f"✅ Updated {len(affected)} holes.")
-            st.rerun()
-        else:
-            st.sidebar.warning("No holes in that range need updating.")
-
-# --- Undo / Reset ---
-st.sidebar.markdown("---")
-col_undo, col_reset = st.sidebar.columns(2)
-with col_undo:
+# --- Edit mode + Undo / Reset in one row ---
+ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
+with ctrl_col1:
+    edit_mode = st.radio(
+        "Edit Mode",
+        ["Lasso / Box Select", "Range (X/Y bounds)"],
+        index=0,
+        horizontal=True,
+    )
+with ctrl_col2:
     if st.button("↩ Undo Last", use_container_width=True, disabled=len(changes_log) == 0):
         last = changes_log.pop()
         match_mask = df["Hole_ID"].astype(str) == str(last["Hole_ID"])
         df.loc[match_mask, "New_Density"] = last["Old_Density"]
         st.session_state["density_df"] = df
         st.rerun()
-
-with col_reset:
+with ctrl_col3:
     if st.button("🔄 Reset All", use_container_width=True):
         st.session_state["density_df"] = original_df.copy()
         st.session_state["density_changes"] = []
         st.rerun()
+
+# --- Range inputs (shown only when Range mode is selected) ---
+if edit_mode == "Range (X/Y bounds)":
+    r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1, 1])
+    with r1:
+        x_min = st.number_input("X min", value=float(df["Coord_Este"].min()), format="%.1f")
+    with r2:
+        x_max = st.number_input("X max", value=float(df["Coord_Este"].max()), format="%.1f")
+    with r3:
+        y_min = st.number_input("Y min", value=float(df["Coord_Norte"].min()), format="%.1f")
+    with r4:
+        y_max = st.number_input("Y max", value=float(df["Coord_Norte"].max()), format="%.1f")
+    with r5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Apply Range Edit", use_container_width=True):
+            mask = (
+                (df["Coord_Este"] >= x_min) & (df["Coord_Este"] <= x_max) &
+                (df["Coord_Norte"] >= y_min) & (df["Coord_Norte"] <= y_max) &
+                (df["New_Density"] != target_density)
+            )
+            affected = df.loc[mask]
+            if len(affected) > 0:
+                for idx_row in affected.index:
+                    changes_log.append({
+                        "Hole_ID": df.at[idx_row, "Hole_ID"],
+                        "Old_Density": df.at[idx_row, "New_Density"],
+                        "New_Density": target_density,
+                        "Timestamp": datetime.now().strftime("%H:%M:%S"),
+                    })
+                df.loc[mask, "New_Density"] = target_density
+                st.session_state["density_df"] = df
+                st.success(f"✅ Updated {len(affected)} holes.")
+                st.rerun()
+            else:
+                st.warning("No holes in that range need updating.")
+
+# --- Color map ---
+unique_densities = sorted(df["New_Density"].dropna().unique().tolist())
+color_map = get_color_map(unique_densities, custom_colors)
+with st.expander("🎨 Customize Colors", expanded=False):
+    cc_cols = st.columns(min(len(unique_densities), 7) or 1)
+    for i, d in enumerate(unique_densities):
+        key = str(d)
+        current_color = color_map.get(d, "#888888")
+        with cc_cols[i % len(cc_cols)]:
+            new_color = st.color_picker(f"{d}", value=current_color, key=f"cp_{d}")
+            if new_color != current_color:
+                custom_colors[key] = new_color
+                color_map[d] = new_color
+
+st.markdown("---")
 
 # ==========================================================
 # SCATTER PLOT
@@ -422,4 +432,5 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
+
 
