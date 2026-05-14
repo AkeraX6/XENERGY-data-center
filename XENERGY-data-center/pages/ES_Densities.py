@@ -80,6 +80,11 @@ def load_file(uploaded_file) -> tuple[pd.DataFrame, str]:
     else:
         df = pd.read_csv(io.StringIO(raw), sep=delim, header=None, engine="python")
 
+    # 14-column files have a leading sequence/row number — drop it
+    if len(df.columns) == 14:
+        df = df.iloc[:, 1:]  # drop first column (sequence number)
+        df.columns = range(len(df.columns))
+
     if len(df.columns) < len(COLUMN_NAMES):
         # Pad with NaN if fewer columns
         for i in range(len(df.columns), len(COLUMN_NAMES)):
