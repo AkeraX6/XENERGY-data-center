@@ -451,14 +451,26 @@ st.subheader("💾 Export Modified Data")
 delim = st.session_state.get("density_delim", "\t")
 delim_char = delim if delim != r"\s+" else "\t"
 
-# Build export dataframe: 13 columns matching input layout
-# Cols 1-11 unchanged, col 12 = Original_Density, col 13 = New_Density
-export_cols = [
+# Build export dataframe
+export_cols_base = [
     "Blast_Name", "Hole_ID", "Coord_Este", "Coord_Norte", "Collar_Z",
     "Length", "Subdrill_Length", "Burden", "Spacing", "Drill_Rig",
-    "Diameter_or_Dip", "Original_Density", "New_Density"
+    "Diameter_or_Dip",
 ]
-export_df = df[export_cols].copy()
+export_df = df[export_cols_base].copy()
+
+# Convert Hole_ID to numeric for prefix detection
+hole_numeric = pd.to_numeric(export_df["Hole_ID"], errors="coerce").fillna(0).astype(int)
+
+# --- Density LB: all 1.3, except 10000000+ → 0.8, 20000000+ → 0.9 ---
+export_df["Density LB"] = 1.3
+export_df.loc[hole_numeric >= 20000000, "Density LB"] = 0.9
+export_df.loc[(hole_numeric >= 10000000) & (hole_numeric < 20000000), "Density LB"] = 0.8
+
+# --- Density XE: keep New_Density (editable), but force 0.8/0.9 for prefix holes ---
+export_df["Density XE"] = df["New_Density"].values
+export_df.loc[hole_numeric >= 20000000, "Density XE"] = 0.9
+export_df.loc[(hole_numeric >= 10000000) & (hole_numeric < 20000000), "Density XE"] = 0.8
 
 # TXT (original format, no header)
 txt_buffer = io.StringIO()
@@ -507,6 +519,5 @@ with st.expander("📈 Density Statistics", expanded=False):
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
-
 
 
