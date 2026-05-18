@@ -517,7 +517,130 @@ with st.expander("📈 Density Statistics", expanded=False):
         changed_holes = len(set(c["Hole_ID"] for c in changes_log))
         st.markdown(f"**Holes modified:** {changed_holes} / {len(df)}")
 
+# ==========================================================
+# REVERSE SECTION — Restore Original Hole Names
+# ==========================================================
+st.markdown("---")
+st.subheader("🔄 Download with Original Hole Names")
+st.caption("Upload the same PROF input file (with original names like B15, C3, D18, P120) to restore hole IDs by coordinate matching.")
+
+prof_reverse_file = st.file_uploader(
+    "📤 Upload original PROF input file",
+    type=["xlsx", "xls", "csv", "txt"],
+    key="density_prof_reverse",
+)
+
+if prof_reverse_file is not None:
+    # Load PROF file
+    prof_name = prof_reverse_file.name.lower()
+    if prof_name.endswith((".xlsx", ".xls")):
+        df_prof = pd.read_excel(prof_reverse_file)
+    else:
+        sample = prof_reverse_file.read(8192).decode(errors="replace")
+        prof_reverse_file.seek(0)
+        try:
+            df_prof = pd.read_csv(prof_reverse_file, sep=None, engine="python")
+        except Exception:
+            prof_reverse_file.seek(0)
+            if sample.count("\t") > sample.count(","):
+                df_prof = pd.read_csv(prof_reverse_file, sep="\t")
+            else:
+                prof_reverse_file.seek(0)
+                df_prof = pd.read_csv(prof_reverse_file)
+
+    prof_cols = df_prof.columns.tolist()
+    if len(prof_cols) < 3:
+        st.error("❌ PROF file needs at least 3 columns (Hole Name, X, Y).")
+    else:
+        # Columns by position: A=Hole Name, B=X (Este), C=Y (Norte)
+        col_name_prof = prof_cols[0]
+        col_x_prof = prof_cols[1]
+        col_y_prof = prof_cols[2]
+
+        df_prof["_orig_name"] = df_prof[col_name_prof].astype(str).str.strip().str.upper()
+        df_prof["_x"] = pd.to_numeric(df_prof[col_x_prof], errors="coerce")
+        df_prof["_y"] = pd.to_numeric(df_prof[col_y_prof], errors="coerce")
+        df_prof = df_prof.dropna(subset=["_x", "_y"])
+
+        # Build coordinate lookup: (rounded X, rounded Y) → original name
+        coord_lookup = {}
+        for _, row in df_prof.iterrows():
+            key = (round(row["_x"], 1), round(row["_y"], 1))
+            coord_lookup[key] = row["_orig_name"]
+
+        st.info(f"🔑 Loaded {len(coord_lookup)} holes from PROF file for coordinate matching.")
+
+        # Match each hole in the density data by coordinates
+        reversed_ids = []
+        match_stats = {"exact": 0, "fuzzy": 0, "unmatched": 0}
+
+        for _, row in df.iterrows():
+            x_val = row["Coord_Este"]
+            y_val = row["Coord_Norte"]
+
+            # Exact match
+            key = (round(x_val, 1), round(y_val, 1))
+            if key in coord_lookup:
+                reversed_ids.append(coord_lookup[key])
+                match_stats["exact"] += 1
+            else:
+                # Fuzzy match (±0.5)
+                found = False
+                for dx in [0.0, -0.1, 0.1, -0.2, 0.2, -0.3, 0.3, -0.5, 0.5]:
+                    for dy in [0.0, -0.1, 0.1, -0.2, 0.2, -0.3, 0.3, -0.5, 0.5]:
+                        alt_key = (round(x_val + dx, 1), round(y_val + dy, 1))
+                        if alt_key in coord_lookup:
+                            reversed_ids.append(coord_lookup[alt_key])
+                            match_stats["fuzzy"] += 1
+                            found = True
+                            break
+                    if found:
+                        break
+                if not found:
+                    # Keep numeric ID as fallback
+                    reversed_ids.append(str(row["Hole_ID"]))
+                    match_stats["unmatched"] += 1
+
+        # Build reversed export (same columns as density export but with original names)
+        rev_export = export_df.copy()
+        rev_export["Hole_ID"] = reversed_ids
+
+        st.success(
+            f"✅ Matched: **{match_stats['exact']}** exact | "
+            f"**{match_stats['fuzzy']}** fuzzy | "
+            f"**{match_stats['unmatched']}** unmatched (kept numeric ID)"
+        )
+
+        st.dataframe(rev_export.head(20), use_container_width=True, hide_index=True)
+
+        # Export reversed file
+        rev_txt_buffer = io.StringIO()
+        rev_export.to_csv(rev_txt_buffer, sep=delim_char, index=False, header=False)
+
+        rev_excel_buffer = io.BytesIO()
+        rev_export.to_excel(rev_excel_buffer, index=False, engine="openpyxl")
+        rev_excel_buffer.seek(0)
+
+        rev_col1, rev_col2 = st.columns(2)
+        with rev_col1:
+            st.download_button(
+                "📄 Download Reversed TXT (no header)",
+                rev_txt_buffer.getvalue(),
+                file_name="ES_Densities_Reversed.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with rev_col2:
+            st.download_button(
+                "📘 Download Reversed Excel",
+                rev_excel_buffer,
+                file_name="ES_Densities_Reversed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
+
 
 
