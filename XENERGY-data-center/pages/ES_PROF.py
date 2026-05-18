@@ -135,6 +135,7 @@ def process_file(df):
     )
 
     # STEP 1 — NÐ POZO: transform prefix codes
+    df["_orig_prefix"] = df[col_pozo].astype(str).str.strip().str.upper().str.extract(r"^([A-Z])", expand=False).fillna("")
     df["NÐ POZO"] = df[col_pozo].apply(transform_pozo)
     before = len(df)
     df = df[df["NÐ POZO"].notna()]
@@ -197,7 +198,7 @@ def process_file(df):
     # Select & order output columns
     output_cols = ["Blast Name", "NÐ POZO", "COORDENADA ESTE", "COORDENADA NORTE",
                    "Collar Z", "Length", "Subdrill Length", "Burden", "Spacing",
-                   "Diammeter", "Stemming"]
+                   "Diammeter", "Stemming", "_orig_prefix"]
     df = df[[c for c in output_cols if c in df.columns]].copy()
 
     # Round floats to 2 decimals
@@ -276,7 +277,7 @@ if uploaded_files:
         export_df = pd.concat(all_cleaned, ignore_index=True)
 
         st.subheader("✅ Merged Cleaned Data Preview")
-        st.dataframe(export_df.head(20), use_container_width=True)
+        st.dataframe(export_df.drop(columns=["_orig_prefix"], errors="ignore").head(20), use_container_width=True)
         st.success(
             f"✅ Final merged dataset: **{len(export_df)}** rows × **{len(export_df.columns)}** columns "
             f"(from {len(all_cleaned)} file(s), {total_original} original rows total)."
@@ -290,6 +291,7 @@ if uploaded_files:
 
         if st.button("▶️ Run Quality Check", use_container_width=True, key="prof_qc"):
             total_rows = len(export_df)
+            qc_df = export_df.drop(columns=["_orig_prefix"], errors="ignore")
 
             if total_rows == 0:
                 st.error("❌ No data to check — the dataset is empty after cleaning.")
@@ -297,14 +299,14 @@ if uploaded_files:
                 issues_found = False
                 report_lines = []
 
-                for col in export_df.columns:
+                for col in qc_df.columns:
                     col_issues = []
 
-                    empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+                    empty_count = int(qc_df[col].isna().sum() + (qc_df[col].astype(str).str.strip() == "").sum())
                     if empty_count > 0:
                         col_issues.append(f"**{empty_count}** empty value(s)")
 
-                    non_empty = export_df[col].dropna().astype(str).str.strip()
+                    non_empty = qc_df[col].dropna().astype(str).str.strip()
                     non_empty = non_empty[non_empty != ""]
 
                     if len(non_empty) > 0:
@@ -344,14 +346,28 @@ if uploaded_files:
         st.markdown("---")
         st.subheader("💾 Export Cleaned File")
 
+        # Option to include/exclude presplit holes (P prefix)
+        keep_presplit = st.checkbox("Keep Presplit holes (P)", value=True, key="prof_keep_presplit")
+
+        download_df = export_df.copy()
+        if not keep_presplit:
+            before_count = len(download_df)
+            download_df = download_df[download_df["_orig_prefix"] != "P"]
+            removed = before_count - len(download_df)
+            if removed > 0:
+                st.info(f"🗑️ Removed {removed} presplit holes (P) from export.")
+
+        # Drop internal prefix column before export
+        download_df = download_df.drop(columns=["_orig_prefix"], errors="ignore")
+
         # Excel (with headers)
         excel_buffer = io.BytesIO()
-        export_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+        download_df.to_excel(excel_buffer, index=False, engine="openpyxl")
         excel_buffer.seek(0)
 
         # TXT (space-separated, no headers)
         txt_buffer = io.StringIO()
-        export_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
+        download_df.to_csv(txt_buffer, index=False, header=False, sep=" ")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -378,3 +394,4 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV/TXT files to begin.")
+
