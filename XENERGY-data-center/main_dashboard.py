@@ -46,7 +46,7 @@ def dashboard_page():
     mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
-        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovel Position", "Block Models", "Drone Fragmentation", "Drill Profile", "PROF Reverse", "Densities"]
+        ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovel Position", "Block Models", "Drone Fragmentation", "Drill Profile", "Densities"]
     )
 
     proceed_button = st.button("🚀 Proceed", use_container_width=True)
@@ -65,7 +65,6 @@ def dashboard_page():
                 "Block Models": "MOB",
                 "Drone Fragmentation": "DRONE",
                 "Drill Profile": "PROF",
-                "PROF Reverse": "PROF_REVERSE",
                 "Densities": "Densities",
             }
 
