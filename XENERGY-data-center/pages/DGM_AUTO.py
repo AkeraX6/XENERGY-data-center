@@ -371,6 +371,32 @@ if uploaded_file is not None and _operator_names:
         else:
             steps_done.append("⚠️ No Plan/Real column pairs found for cross-filling.")
 
+        # ---------- Fix Elev Plan / Elev Real: empty, negative, zero, or under 2000 ----------
+        elev_plan_col = next((c for c in ["Elev Plan", "Elev.Plan"] if c in df.columns), None)
+        elev_real_col = next((c for c in ["Elev Real", "Elev.Real"] if c in df.columns), None)
+
+        if elev_plan_col and elev_real_col:
+            df[elev_plan_col] = pd.to_numeric(df[elev_plan_col], errors="coerce")
+            df[elev_real_col] = pd.to_numeric(df[elev_real_col], errors="coerce")
+            elev_fixes = 0
+
+            for idx in df.index:
+                plan_v = df.at[idx, elev_plan_col]
+                real_v = df.at[idx, elev_real_col]
+
+                plan_bad = pd.isna(plan_v) or plan_v <= 0 or plan_v < 2000
+                real_bad = pd.isna(real_v) or real_v <= 0
+
+                if plan_bad and not real_bad:
+                    df.at[idx, elev_plan_col] = real_v
+                    elev_fixes += 1
+                if real_bad and not plan_bad:
+                    df.at[idx, elev_real_col] = plan_v
+                    elev_fixes += 1
+
+            if elev_fixes > 0:
+                steps_done.append(f"✅ Fixed {elev_fixes} Elev values (empty/negative/zero/under 2000 replaced from counterpart).")
+
         # ---------- Extract Day, Month, Year from Dia ----------
         if "Dia" in df.columns:
             df["Dia"] = pd.to_datetime(df["Dia"], errors="coerce")
@@ -539,9 +565,6 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
-
-
 
 
 
