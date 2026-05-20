@@ -129,9 +129,9 @@ def build_figure(df: pd.DataFrame, color_map: dict) -> go.Figure:
         sub = df[df["New_Density"] == density_val]
         color = color_map.get(density_val, "#888888")
 
-        # Split by material type: Lastre (Extra==1) = circle, Mineral (Extra==2) = star
-        lastre = sub[sub["Extra"] != 2]
-        mineral = sub[sub["Extra"] == 2]
+        # Split by material type: Mineral (Extra==1) = star, Lastre (Extra==2) = circle
+        mineral = sub[sub["Extra"] == 1]
+        lastre = sub[sub["Extra"] != 1]
 
         if len(lastre) > 0:
             fig.add_trace(go.Scatter(
@@ -187,7 +187,7 @@ def build_figure(df: pd.DataFrame, color_map: dict) -> go.Figure:
 
 def build_material_figure(df: pd.DataFrame) -> go.Figure:
     """Build a read-only scatter colored by material type (Extra column): 1=Lastre, 2=Mineral."""
-    MATERIAL_MAP = {1: ("Lastre", "#2962FF"), 2: ("Mineral", "#D50000")}
+    MATERIAL_MAP = {1: ("Mineral", "#D50000"), 2: ("Lastre", "#2962FF")}
     fig = go.Figure()
 
     for val in sorted(df["Extra"].dropna().unique()):
@@ -641,7 +641,6 @@ if prof_reverse_file is not None:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
-
 
 
 
