@@ -243,6 +243,8 @@ if uploaded_file is not None and _operator_names:
                 return 2
             if "pd_02" in val or "pd02" in val:
                 return 22
+            if "pe_03" in val or "pe03" in val:
+                return 3
             if "trepsa" in val:
                 return 4
             return value
@@ -537,6 +539,7 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
+
 
 
 
