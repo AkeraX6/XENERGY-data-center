@@ -439,7 +439,7 @@ if uploaded_file is not None and _operator_names:
     excel_buffer.seek(0)
 
     # TXT export with specific columns in order
-    txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
+    txt_columns = ["Operador", "Turno", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
     txt_available_cols = [col for col in txt_columns if col in df.columns]
     txt_df = df[txt_available_cols].copy() if txt_available_cols else df.copy()
     
@@ -447,6 +447,11 @@ if uploaded_file is not None and _operator_names:
     for col in ["Day", "Month", "Year"]:
         if col in txt_df.columns:
             txt_df[col] = txt_df[col].fillna(0).astype(int)
+    
+    # Format decimal columns to 2 decimal places
+    for col in txt_df.columns:
+        if txt_df[col].dtype in ["float64", "float32"]:
+            txt_df[col] = txt_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "")
     
     txt_buffer = io.StringIO()
     txt_df.to_csv(txt_buffer, index=False, header=False, sep="\t")
@@ -560,7 +565,6 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
 
 
 
