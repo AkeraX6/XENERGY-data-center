@@ -208,14 +208,9 @@ if uploaded_file is not None and _operator_names:
             if pd.isna(text):
                 return None, None
             text = str(text).upper()
-            # Check for F##W pattern (e.g., F12W → 120)
-            xp_match_w = re.search(r"F0*(\d+)W", text)
-            if xp_match_w:
-                expansion = int(xp_match_w.group(1)) * 10  # F12W → 120
-            else:
-                # Standard F## pattern (e.g., F12 → 12)
-                xp_match = re.search(r"F0*(\d+)", text)
-                expansion = int(xp_match.group(1)) if xp_match else None
+            # Extract expansion from F## pattern (e.g., F12 → 12, F12W → 12, F07B → 7)
+            xp_match = re.search(r"F0*(\d+)", text)
+            expansion = int(xp_match.group(1)) if xp_match else None
             
             nivel = None
             nv_match = re.search(r"B0*(\d{3,4})", text)
