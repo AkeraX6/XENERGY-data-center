@@ -480,8 +480,13 @@ if uploaded_file is not None and _operator_names:
     st.markdown("---")
     st.subheader("🔍 Data Quality Check")
 
+    # Build the TXT dataframe for quality checking (same columns as TXT export)
+    qc_txt_columns = ["Operador", "Turno", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
+    qc_available_cols = [col for col in qc_txt_columns if col in df.columns]
+    qc_df = df[qc_available_cols].copy() if qc_available_cols else df.copy()
+
     if st.button("▶️ Run Quality Check", use_container_width=True, key="dgm_auto_qc"):
-        total_rows = len(export_df)
+        total_rows = len(qc_df)
 
         if total_rows == 0:
             st.error("❌ No data to check — the dataset is empty after cleaning.")
@@ -489,14 +494,14 @@ if uploaded_file is not None and _operator_names:
             issues_found = False
             report_lines = []
 
-            for col in export_df.columns:
+            for col in qc_df.columns:
                 col_issues = []
 
-                empty_count = int(export_df[col].isna().sum() + (export_df[col].astype(str).str.strip() == "").sum())
+                empty_count = int(qc_df[col].isna().sum() + (qc_df[col].astype(str).str.strip() == "").sum())
                 if empty_count > 0:
                     col_issues.append(f"**{empty_count}** empty value(s)")
 
-                non_empty = export_df[col].dropna().astype(str).str.strip()
+                non_empty = qc_df[col].dropna().astype(str).str.strip()
                 non_empty = non_empty[non_empty != ""]
 
                 if len(non_empty) > 0:
@@ -565,8 +570,6 @@ if uploaded_file is not None and _operator_names:
 
 else:
     st.info("📂 Please upload a file to begin.")
-
-
 
 
 
