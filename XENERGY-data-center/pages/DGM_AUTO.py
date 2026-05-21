@@ -481,7 +481,7 @@ if uploaded_file is not None and _operator_names:
     st.subheader("🔍 Data Quality Check")
 
     # Build the TXT dataframe for quality checking (same columns as TXT export)
-    qc_txt_columns = ["Operador", "Turno", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
+    qc_txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
     qc_available_cols = [col for col in qc_txt_columns if col in df.columns]
     qc_df = df[qc_available_cols].copy() if qc_available_cols else df.copy()
 
