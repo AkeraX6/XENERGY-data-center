@@ -439,7 +439,7 @@ if uploaded_file is not None and _operator_names:
     excel_buffer.seek(0)
 
     # TXT export with specific columns in order
-    txt_columns = ["Operador", "Turno", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
+    txt_columns = ["Operador", "Expansion", "Perforadora", "Este Plan", "Norte Plan", "Elev Plan", "Tiempo Perforación [hrs]", "Day", "Month", "Year"]
     txt_available_cols = [col for col in txt_columns if col in df.columns]
     txt_df = df[txt_available_cols].copy() if txt_available_cols else df.copy()
     
