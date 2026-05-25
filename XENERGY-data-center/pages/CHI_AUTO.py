@@ -6,7 +6,7 @@ import io
 # PAGE HEADER
 # ==========================================================
 st.markdown(
-    "<h2 style='text-align:center;'>CHI — Data Merger</h2>",
+    "<h2 style='text-align:center;'>Chinalco — Data Merger</h2>",
     unsafe_allow_html=True
 )
 st.markdown(
@@ -270,6 +270,51 @@ with tabs[2]:
         split = pick_columns(split, SPLIT_COLS)
         split = clean_df(split)
 
+        # --- Outlier filtering on numeric columns ---
+        filter_cols = ["P10", "P20", "P30", "P40", "P50", "P60", "P70", "P80", "P90", "TS"]
+        filter_cols_available = [c for c in filter_cols if c in split.columns]
+
+        # Convert filter columns to numeric
+        for col in filter_cols_available:
+            split[col] = pd.to_numeric(split[col], errors="coerce")
+
+        rows_before = len(split)
+        summary_data = []
+        mask_keep = pd.Series(True, index=split.index)
+
+        for col in filter_cols_available:
+            q_low = split[col].quantile(0.01)
+            q_high = split[col].quantile(0.99)
+            below = (split[col] < q_low).sum()
+            above = (split[col] > q_high).sum()
+            mask_keep &= (split[col] >= q_low) & (split[col] <= q_high)
+            summary_data.append({
+                "Column": col,
+                "Q 0.01 (Lower)": round(q_low, 4),
+                "Q 0.99 (Upper)": round(q_high, 4),
+                "Outliers Below": int(below),
+                "Outliers Above": int(above),
+            })
+
+        split = split[mask_keep].reset_index(drop=True)
+        rows_after = len(split)
+        removed = rows_before - rows_after
+        pct_removed = (removed / rows_before * 100) if rows_before > 0 else 0
+
+        # Display summary
+        st.markdown("**Outlier Filtering Summary (Q0.01 – Q0.99)**")
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, hide_index=True)
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("Rows Before", rows_before)
+        with col_m2:
+            st.metric("Rows After", rows_after)
+        with col_m3:
+            st.metric("Removed", f"{removed} ({pct_removed:.1f}%)")
+
+        st.markdown("---")
         st.dataframe(split.head(30))
         st.info(f"{len(split)} rows  |  {len(split.columns)} columns")
         download_buttons(split, "Split", "spl")
@@ -294,3 +339,4 @@ with tabs[3]:
 # ==========================================================
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam — Omar El Kendi")
+
