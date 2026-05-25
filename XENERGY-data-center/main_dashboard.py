@@ -43,7 +43,7 @@ else:
 def dashboard_page():
     st.subheader("🧭 Select Processing Module")
 
-    mine = st.selectbox("Select Mine", ["Select...", "DGM", "Escondida", "Mantos Blancos"])
+    mine = st.selectbox("Select Mine", ["Select...", "Chinalco", "DGM", "Escondida", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovel Position", "Block Models", "Drone Fragmentation", "Drill Profile", "Densities"]
@@ -55,7 +55,7 @@ def dashboard_page():
         if mine == "Select..." or file_type == "Select...":
             st.warning("⚠️ Please select both Mine and File Type before proceeding.")
         else:
-            mine_codes = {"DGM": "DGM", "Escondida": "ES", "Mantos Blancos": "MB"}
+            mine_codes = {"Chinalco": "CHI", "DGM": "DGM", "Escondida": "ES", "Mantos Blancos": "MB"}
             file_codes = {
                 "Drilling": "AUTO",
                 "QAQC": "QAQC",
