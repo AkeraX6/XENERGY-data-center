@@ -66,9 +66,13 @@ EXPLOSIVES_COLS = [
 # HELPER FUNCTIONS
 # ==========================================================
 def clean_df(df):
-    """Replace '-', empty strings, and NaN with 0."""
+    """Replace '-', empty strings, and NaN with 0. Fix mixed-type columns."""
     df = df.replace(["-", ""], 0)
     df = df.fillna(0)
+    # Fix mixed-type columns: convert object columns to string to avoid Arrow errors
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].astype(str)
     return df
 
 
@@ -104,7 +108,6 @@ def download_buttons(df, label, key):
             to_excel(df),
             file_name=f"{label}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
             key=f"{key}_xl",
         )
     with c2:
@@ -113,7 +116,6 @@ def download_buttons(df, label, key):
             to_txt(df),
             file_name=f"{label}.txt",
             mime="text/plain",
-            use_container_width=True,
             key=f"{key}_tx",
         )
 
@@ -227,7 +229,7 @@ with tabs[0]:
 
         rows_removed = len(dp) - len(drilling_data)
 
-        st.dataframe(drilling_data.head(30), use_container_width=True)
+        st.dataframe(drilling_data.head(30))
         col_info1, col_info2 = st.columns(2)
         with col_info1:
             st.info(f"{len(drilling_data)} rows  |  {len(drilling_data.columns)} columns")
@@ -253,7 +255,7 @@ with tabs[1]:
         hauling = pick_columns(hauling, HAULING_COLS)
         hauling = clean_df(hauling)
 
-        st.dataframe(hauling.head(30), use_container_width=True)
+        st.dataframe(hauling.head(30))
         st.info(f"{len(hauling)} rows  |  {len(hauling.columns)} columns")
         download_buttons(hauling, "Hauling", "haul")
     else:
@@ -268,7 +270,7 @@ with tabs[2]:
         split = pick_columns(split, SPLIT_COLS)
         split = clean_df(split)
 
-        st.dataframe(split.head(30), use_container_width=True)
+        st.dataframe(split.head(30))
         st.info(f"{len(split)} rows  |  {len(split.columns)} columns")
         download_buttons(split, "Split", "spl")
     else:
@@ -283,7 +285,7 @@ with tabs[3]:
         explosives = pick_columns(explosives, EXPLOSIVES_COLS)
         explosives = clean_df(explosives)
 
-        st.dataframe(explosives.head(30), use_container_width=True)
+        st.dataframe(explosives.head(30))
         st.info(f"{len(explosives)} rows  |  {len(explosives.columns)} columns")
         download_buttons(explosives, "Explosives", "expl")
     else:
