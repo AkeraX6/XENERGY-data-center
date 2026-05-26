@@ -65,7 +65,67 @@ EXPLOSIVES_COLS = [
 # ==========================================================
 # HELPER FUNCTIONS
 # ==========================================================
-def clean_df(df):
+def clean_outliers_by_quantile(df, columns_to_clean, group_col=None, lower_q=0.01, upper_q=0.99):
+    """
+    Remove rows where ANY value in columns_to_clean falls outside
+    the [lower_q, upper_q] quantile range. If group_col is set,
+    quantiles are computed per group (e.g. per SHOVEL).
+    Returns: (df_cleaned, stats_df, rows_removed, pct_removed)
+    """
+    for col in columns_to_clean:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    rows_before = len(df)
+    summary_rows = []
+    mask_keep = pd.Series(True, index=df.index)
+
+    if group_col and group_col in df.columns:
+        groups = df[group_col].unique()
+        for col in columns_to_clean:
+            col_below = 0
+            col_above = 0
+            q_lows, q_highs = [], []
+            for grp in groups:
+                grp_mask = df[group_col] == grp
+                grp_vals = df.loc[grp_mask, col]
+                q_low = grp_vals.quantile(lower_q)
+                q_high = grp_vals.quantile(upper_q)
+                q_lows.append(q_low)
+                q_highs.append(q_high)
+                below = grp_mask & (df[col] < q_low)
+                above = grp_mask & (df[col] > q_high)
+                col_below += int(below.sum())
+                col_above += int(above.sum())
+                mask_keep &= ~below & ~above
+            summary_rows.append({
+                "Column": col,
+                f"Q{lower_q} (Lower, avg)": round(sum(q_lows) / len(q_lows), 4),
+                f"Q{upper_q} (Upper, avg)": round(sum(q_highs) / len(q_highs), 4),
+                "Outliers Below": col_below,
+                "Outliers Above": col_above,
+            })
+    else:
+        for col in columns_to_clean:
+            q_low = df[col].quantile(lower_q)
+            q_high = df[col].quantile(upper_q)
+            below = (df[col] < q_low).sum()
+            above = (df[col] > q_high).sum()
+            mask_keep &= (df[col] >= q_low) & (df[col] <= q_high)
+            summary_rows.append({
+                "Column": col,
+                f"Q{lower_q} (Lower)": round(q_low, 4),
+                f"Q{upper_q} (Upper)": round(q_high, 4),
+                "Outliers Below": int(below),
+                "Outliers Above": int(above),
+            })
+
+    df_cleaned = df[mask_keep].reset_index(drop=True)
+    rows_removed = rows_before - len(df_cleaned)
+    pct_removed = (rows_removed / rows_before * 100) if rows_before > 0 else 0
+    stats_df = pd.DataFrame(summary_rows)
+    return df_cleaned, stats_df, rows_removed, pct_removed
+
+
     """Replace '-', empty strings, and NaN with 0. Fix mixed-type columns."""
     df = df.replace(["-", ""], 0)
     df = df.fillna(0)
@@ -270,49 +330,51 @@ with tabs[2]:
         split = pick_columns(split, SPLIT_COLS)
         split = clean_df(split)
 
-        # --- Outlier filtering on numeric columns ---
-        filter_cols = ["P10", "P20", "P30", "P40", "P50", "P60", "P70", "P80", "P90", "TS"]
-        filter_cols_available = [c for c in filter_cols if c in split.columns]
+        # --- Outlier filtering controls ---
+        st.markdown("**Outlier Filtering Configuration**")
 
-        # Convert filter columns to numeric
-        for col in filter_cols_available:
-            split[col] = pd.to_numeric(split[col], errors="coerce")
+        default_filter_cols = ["P10", "P20", "P30", "P40", "P50", "P60", "P70", "P80", "P90", "TS"]
+        numeric_candidates = [c for c in default_filter_cols if c in split.columns]
 
-        rows_before = len(split)
-        summary_data = []
-        mask_keep = pd.Series(True, index=split.index)
+        col_cfg1, col_cfg2 = st.columns(2)
+        with col_cfg1:
+            selected_filter_cols = st.multiselect(
+                "Columns to filter",
+                options=numeric_candidates,
+                default=numeric_candidates,
+                key="split_filter_cols",
+            )
+        with col_cfg2:
+            group_by_shovel = st.checkbox("Filter per SHOVEL", value=True, key="split_group_shovel")
 
-        for col in filter_cols_available:
-            q_low = split[col].quantile(0.01)
-            q_high = split[col].quantile(0.99)
-            below = (split[col] < q_low).sum()
-            above = (split[col] > q_high).sum()
-            mask_keep &= (split[col] >= q_low) & (split[col] <= q_high)
-            summary_data.append({
-                "Column": col,
-                "Q 0.01 (Lower)": round(q_low, 4),
-                "Q 0.99 (Upper)": round(q_high, 4),
-                "Outliers Below": int(below),
-                "Outliers Above": int(above),
-            })
+        col_sl1, col_sl2 = st.columns(2)
+        with col_sl1:
+            lower_q = st.slider("Lower quantile", 0.00, 0.10, 0.01, 0.01, key="split_lq")
+        with col_sl2:
+            upper_q = st.slider("Upper quantile", 0.90, 1.00, 0.99, 0.01, key="split_uq")
 
-        split = split[mask_keep].reset_index(drop=True)
-        rows_after = len(split)
-        removed = rows_before - rows_after
-        pct_removed = (removed / rows_before * 100) if rows_before > 0 else 0
+        # --- Apply filtering ---
+        if selected_filter_cols:
+            group_col = "SHOVEL" if group_by_shovel and "SHOVEL" in split.columns else None
+            split, stats_df, rows_removed, pct_removed = clean_outliers_by_quantile(
+                split, selected_filter_cols, group_col=group_col,
+                lower_q=lower_q, upper_q=upper_q
+            )
+            rows_after = len(split)
 
-        # Display summary
-        st.markdown("**Outlier Filtering Summary (Q0.01 – Q0.99)**")
-        summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, hide_index=True)
+            st.markdown("---")
+            st.markdown("**Outlier Filtering Summary**")
+            st.dataframe(stats_df, hide_index=True)
 
-        col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("Rows Before", rows_before)
-        with col_m2:
-            st.metric("Rows After", rows_after)
-        with col_m3:
-            st.metric("Removed", f"{removed} ({pct_removed:.1f}%)")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            with col_m1:
+                st.metric("Rows Before", rows_after + rows_removed)
+            with col_m2:
+                st.metric("Rows After", rows_after)
+            with col_m3:
+                st.metric("Removed", f"{rows_removed} ({pct_removed:.1f}%)")
+        else:
+            st.info("No columns selected for filtering — showing raw merged data.")
 
         st.markdown("---")
         st.dataframe(split.head(30))
