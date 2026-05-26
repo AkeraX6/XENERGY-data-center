@@ -521,99 +521,97 @@ with st.expander("📈 Density Statistics", expanded=False):
 # REVERSE SECTION — Restore Original Hole Names
 # ==========================================================
 st.markdown("---")
-st.subheader("🔄 Download with Original Hole Names")
-st.caption("Upload the same PROF input file (with original names like B15, C3, D18, P120) to restore hole IDs by coordinate matching.")
+st.subheader("Restore Original Hole Names")
+st.caption("Upload the original client file (with names like B50, C3, D18). Holes are matched by Coord_Este + Coord_Norte and the numeric IDs are replaced with the original names.")
 
 prof_reverse_file = st.file_uploader(
-    "📤 Upload original PROF input file",
-    type=["xlsx", "xls", "csv", "txt"],
+    "Upload original file with real hole names",
+    type=["xlsx", "xls", "csv", "txt", "tsv"],
     key="density_prof_reverse",
 )
 
 if prof_reverse_file is not None:
-    # Load PROF file
-    prof_name = prof_reverse_file.name.lower()
-    if prof_name.endswith((".xlsx", ".xls")):
-        df_prof = pd.read_excel(prof_reverse_file)
-    else:
-        sample = prof_reverse_file.read(8192).decode(errors="replace")
-        prof_reverse_file.seek(0)
-        try:
-            df_prof = pd.read_csv(prof_reverse_file, sep=None, engine="python")
-        except Exception:
-            prof_reverse_file.seek(0)
-            if sample.count("\t") > sample.count(","):
-                df_prof = pd.read_csv(prof_reverse_file, sep="\t")
-            else:
-                prof_reverse_file.seek(0)
-                df_prof = pd.read_csv(prof_reverse_file)
+    # Load original file using the same parser as the density file
+    try:
+        prof_name = prof_reverse_file.name.lower()
+        if prof_name.endswith((".xlsx", ".xls")):
+            df_orig = pd.read_excel(prof_reverse_file, header=None)
+            # Handle 14-column files (leading sequence number)
+            if len(df_orig.columns) == 14:
+                df_orig = df_orig.iloc[:, 1:]
+                df_orig.columns = range(len(df_orig.columns))
+            if len(df_orig.columns) >= len(COLUMN_NAMES):
+                df_orig = df_orig.iloc[:, :len(COLUMN_NAMES)]
+            elif len(df_orig.columns) < len(COLUMN_NAMES):
+                for i in range(len(df_orig.columns), len(COLUMN_NAMES)):
+                    df_orig[i] = pd.NA
+            df_orig.columns = COLUMN_NAMES
+        else:
+            df_orig, _ = load_file(prof_reverse_file)
 
-    prof_cols = df_prof.columns.tolist()
-    if len(prof_cols) < 3:
-        st.error("❌ PROF file needs at least 3 columns (Hole Name, X, Y).")
-    else:
-        # Columns by position: A=Hole Name, B=X (Este), C=Y (Norte)
-        col_name_prof = prof_cols[0]
-        col_x_prof = prof_cols[1]
-        col_y_prof = prof_cols[2]
+        # Ensure coordinate columns are numeric
+        df_orig["Coord_Este"] = pd.to_numeric(df_orig["Coord_Este"], errors="coerce")
+        df_orig["Coord_Norte"] = pd.to_numeric(df_orig["Coord_Norte"], errors="coerce")
+        df_orig = df_orig.dropna(subset=["Coord_Este", "Coord_Norte"])
+        df_orig["Hole_ID"] = df_orig["Hole_ID"].astype(str).str.strip()
 
-        df_prof["_orig_name"] = df_prof[col_name_prof].astype(str).str.strip().str.upper()
-        df_prof["_x"] = pd.to_numeric(df_prof[col_x_prof], errors="coerce")
-        df_prof["_y"] = pd.to_numeric(df_prof[col_y_prof], errors="coerce")
-        df_prof = df_prof.dropna(subset=["_x", "_y"])
+        st.info(f"Loaded {len(df_orig)} holes from original file.")
 
-        # Build coordinate lookup: (rounded X, rounded Y) → original name
+        # Build coordinate lookup: (round2 Este, round2 Norte) → original Hole_ID
         coord_lookup = {}
-        for _, row in df_prof.iterrows():
-            key = (round(row["_x"], 1), round(row["_y"], 1))
-            coord_lookup[key] = row["_orig_name"]
+        for _, row in df_orig.iterrows():
+            key = (round(row["Coord_Este"], 2), round(row["Coord_Norte"], 2))
+            coord_lookup[key] = row["Hole_ID"]
 
-        st.info(f"🔑 Loaded {len(coord_lookup)} holes from PROF file for coordinate matching.")
-
-        # Match each hole in the density data by coordinates
+        # Match each hole in the density export by coordinates
         reversed_ids = []
         match_stats = {"exact": 0, "fuzzy": 0, "unmatched": 0}
 
-        for _, row in df.iterrows():
+        for _, row in export_df.iterrows():
             x_val = row["Coord_Este"]
             y_val = row["Coord_Norte"]
 
-            # Exact match
-            key = (round(x_val, 1), round(y_val, 1))
+            if pd.isna(x_val) or pd.isna(y_val):
+                reversed_ids.append(str(row["Hole_ID"]))
+                match_stats["unmatched"] += 1
+                continue
+
+            # Exact match (rounded to 2 decimals)
+            key = (round(x_val, 2), round(y_val, 2))
             if key in coord_lookup:
                 reversed_ids.append(coord_lookup[key])
                 match_stats["exact"] += 1
-            else:
-                # Fuzzy match (±0.5)
-                found = False
-                for dx in [0.0, -0.1, 0.1, -0.2, 0.2, -0.3, 0.3, -0.5, 0.5]:
-                    for dy in [0.0, -0.1, 0.1, -0.2, 0.2, -0.3, 0.3, -0.5, 0.5]:
-                        alt_key = (round(x_val + dx, 1), round(y_val + dy, 1))
-                        if alt_key in coord_lookup:
-                            reversed_ids.append(coord_lookup[alt_key])
-                            match_stats["fuzzy"] += 1
-                            found = True
-                            break
-                    if found:
-                        break
-                if not found:
-                    # Keep numeric ID as fallback
-                    reversed_ids.append(str(row["Hole_ID"]))
-                    match_stats["unmatched"] += 1
+                continue
 
-        # Build reversed export (same columns as density export but with original names)
+            # Fuzzy: find nearest hole within 1.0m tolerance
+            best_name = None
+            best_dist = float("inf")
+            for (ox, oy), name in coord_lookup.items():
+                dist = ((x_val - ox) ** 2 + (y_val - oy) ** 2) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_name = name
+
+            if best_dist <= 1.0 and best_name is not None:
+                reversed_ids.append(best_name)
+                match_stats["fuzzy"] += 1
+            else:
+                reversed_ids.append(str(row["Hole_ID"]))
+                match_stats["unmatched"] += 1
+
+        # Build reversed export
         rev_export = export_df.copy()
         rev_export["Hole_ID"] = reversed_ids
 
         st.success(
-            f"✅ Matched: **{match_stats['exact']}** exact | "
-            f"**{match_stats['fuzzy']}** fuzzy | "
+            f"Matched: **{match_stats['exact']}** exact | "
+            f"**{match_stats['fuzzy']}** fuzzy (< 1m) | "
             f"**{match_stats['unmatched']}** unmatched (kept numeric ID)"
         )
 
         st.dataframe(rev_export.head(20), use_container_width=True, hide_index=True)
 
-        # Export reversed file
+        # Export
         rev_txt_buffer = io.StringIO()
         rev_export.to_csv(rev_txt_buffer, sep=delim_char, index=False, header=False)
 
@@ -624,7 +622,7 @@ if prof_reverse_file is not None:
         rev_col1, rev_col2 = st.columns(2)
         with rev_col1:
             st.download_button(
-                "📄 Download Reversed TXT (no header)",
+                "Download Reversed TXT (no header)",
                 rev_txt_buffer.getvalue(),
                 file_name="ES_Densities_Reversed.txt",
                 mime="text/plain",
@@ -632,15 +630,15 @@ if prof_reverse_file is not None:
             )
         with rev_col2:
             st.download_button(
-                "📘 Download Reversed Excel",
+                "Download Reversed Excel",
                 rev_excel_buffer,
                 file_name="ES_Densities_Reversed.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
+    except Exception as e:
+        st.error(f"Error processing original file: {e}")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.caption("Built by Maxam - Omar El Kendi")
-
-
 
