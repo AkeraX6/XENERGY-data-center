@@ -126,6 +126,7 @@ def clean_outliers_by_quantile(df, columns_to_clean, group_col=None, lower_q=0.0
     return df_cleaned, stats_df, rows_removed, pct_removed
 
 
+def clean_df(df):
     """Replace '-', empty strings, and NaN with 0. Fix mixed-type columns."""
     df = df.replace(["-", ""], 0)
     df = df.fillna(0)
