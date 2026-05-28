@@ -501,6 +501,20 @@ if uploaded_files:
 
     progress.empty()
 
+    # ── Detect files where cleaning removed ALL rows ─────────
+    empty_files = [(name, uf_name) for (name, df), uf_name
+                   in zip(cleaned_files, [u.name for u in uploaded_files])
+                   if len(df) == 0]
+    cleaned_files = [(name, df) for name, df in cleaned_files if len(df) > 0]
+
+    if empty_files:
+        st.warning(
+            f"**{len(empty_files)} file(s) had all rows removed by the filters** "
+            f"(excluded from the report):"
+        )
+        for sheet_name, original_name in empty_files:
+            st.markdown(f"  - `{original_name}` → sheet `{sheet_name}`")
+
     # ── Deduplicate sheet names ──────────────────────────────
     seen = {}
     for i, (name, df) in enumerate(cleaned_files):
@@ -510,7 +524,10 @@ if uploaded_files:
         else:
             seen[name] = 0
 
-    st.success(f"Cleaned **{len(uploaded_files)}** file(s) successfully.")
+    st.success(
+        f"Cleaned **{len(uploaded_files)}** file(s): "
+        f"**{len(cleaned_files)}** with data, **{len(empty_files)}** empty (excluded)."
+    )
 
     # ── 2) Processing steps ──────────────────────────────────
     with st.expander("Processing Steps", expanded=False):
@@ -565,17 +582,21 @@ if uploaded_files:
                 # Text in numeric columns
                 non_empty = df[col].dropna().astype(str).str.strip()
                 non_empty = non_empty[non_empty != ""]
-                text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
-                text_count = int(text_mask.sum())
+                text_count = 0
+                special_count = 0
+                if len(non_empty) > 0:
+                    text_mask = non_empty.apply(lambda x: bool(re.search(r"[A-Za-z]", str(x))))
+                    text_count = int(text_mask.sum())
+
+                    # Special characters
+                    special_mask = non_empty.apply(
+                        lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x)))
+                    )
+                    special_count = int(special_mask.sum())
+
                 if text_count > 0:
                     col_issues.append(f"{text_count} text cells")
                     all_ok = False
-
-                # Special characters
-                special_mask = non_empty.apply(
-                    lambda x: bool(re.search(r"[^0-9eE.\-+\s]", str(x)))
-                )
-                special_count = int(special_mask.sum())
                 if special_count > 0:
                     col_issues.append(f"{special_count} special chars")
                     all_ok = False
@@ -618,3 +639,4 @@ if uploaded_files:
 
 else:
     st.info("Upload QAQC Excel or CSV files to begin.")
+
