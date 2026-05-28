@@ -363,6 +363,146 @@ DATA_MAP = {
     21: "Spacing (Design)",        # U  S LB  (= Spacing)
 }
 
+# Summary-only columns (header in row 1, formula/value in row 2 only)
+SUMMARY_HEADERS = [
+    "Tonelaje tronado Estatus",                          # AA (27)
+    "Suma Long real BC",                                 # AB (28)
+    "Suma Kg real BC",                                   # AC (29)
+    "Promedio IP protocolo BC (ton/m)",                  # AD (30)
+    "Promedio Kg explosivo LB",                          # AE (31)
+    "Promedio IP LB (ton/m)",                            # AF (32)
+    "Suma Kg LB eq. Variación densidad sólo producción", # AG (33)
+    "Promedio long",                                     # AH (34)
+    "% Aumento o reducción IP",                          # AI (35)
+    "N° pozos BC",                                       # AJ (36)
+    "N° pozos LB",                                       # AK (37)
+    "Pozos ahorrados",                                   # AL (38)
+    "Kg pozos ahorrados",                                # AM (39)
+    "Kg ahorro por var. Densidad",                       # AN (40)
+    "Total ahorro Kg",                                   # AO (41)
+    "% ahorro Kg explosivo total",                       # AP (42)
+    "FC real [gr/ton]",                                  # AQ (43)
+    "FC LB [gr/ton]",                                    # AR (44)
+    "Ahorro según FC",                                   # AS (45)
+    "X80 total Proyectado",                              # AT (46)
+    "K80 total Real",                                    # AU (47)
+    "X80 total LB",                                      # AV (48)
+    "X80 total Proyectado Mineral",                      # AW (49)
+    "K80 total Real Mineral",                            # AX (50)
+    "X80 total LB Mineral",                              # AY (51)
+    "X80 total Proyectado Oxido",                        # AZ (52)
+    "K80 total Real Oxido",                              # BA (53)
+    "X80 total LB Oxido",                                # BB (54)
+    "X80 total Proyectado Lastre",                       # BC (55)
+    "K80 total Real Lastre",                             # BD (56)
+    "X80 total LB Lastre",                               # BE (57)
+    "% de material mineral",                             # BF (58)
+    "% de material oxido",                               # BG (59)
+    "% de material lastre",                              # BH (60)
+    "Pozos totales",                                     # BI (61)
+    "Pozos medidos",                                     # BJ (62)
+    "KPI Mineral",                                       # BK (63)
+    "KPI Oxido",                                         # BL (64)
+    "KPI Lastre",                                        # BM (65)
+]
+
+# Formulas written only in row 2 (English function names)
+SUMMARY_FORMULAS = {
+    "Suma Long real BC": "=SUM(C:C)",
+    "Suma Kg real BC": '=SUMIFS(I:I,B:B,"<5000")',
+    "Promedio IP protocolo BC (ton/m)": '=AVERAGEIF(M:M,">0")',
+    "Promedio Kg explosivo LB": '=AVERAGEIFS(S:S,B:B,"<5000")',
+    "Promedio IP LB (ton/m)": '=AVERAGEIF(X:X,">0")',
+    "Suma Kg LB eq. Variación densidad sólo producción": "=SUM(Y:Y)",
+    "Promedio long": '=AVERAGEIFS(C:C,B:B,"<5000",C:C,">0")',
+    "N° pozos BC": "=COUNT(B:B)",
+    "N° pozos LB": "=AJ2*(1+AI2)",
+    "Pozos ahorrados": "=AK2-AJ2",
+    "Kg pozos ahorrados": "=AL2*AE2",
+    "Kg ahorro por var. Densidad": "=AG2-AC2",
+    "Total ahorro Kg": "=IF(AM2<0,AN2,AM2+AN2)",
+    "% ahorro Kg explosivo total": "=IF(AM2>0,AO2/(AG2+AM2),AO2/AG2)",
+    "FC real [gr/ton]": "=AC2/AA2*1000",
+    "FC LB [gr/ton]": "=IF(AM2>0,(AG2+AM2)/AA2*1000,AG2/AA2*1000)",
+    "Ahorro según FC": "=1-AQ2/AR2",
+}
+
+# Header color mapping: header_name → (fill_hex, font_hex)
+_CLR = {
+    # Group 1: Real field data — Grey
+    "ID malla": ("808080", "FFFFFF"),
+    "I Pozo": ("808080", "FFFFFF"),
+    "Long real BC": ("808080", "FFFFFF"),
+    "Pasadura real BC": ("808080", "FFFFFF"),
+    "Taco real BC": ("808080", "FFFFFF"),
+    "Diámetro Protocolo BC": ("808080", "FFFFFF"),
+    "Densidad protocolo BC": ("808080", "FFFFFF"),
+    "Kg real BC": ("808080", "FFFFFF"),
+    "Burden": ("808080", "FFFFFF"),
+    "Spacing": ("808080", "FFFFFF"),
+    # Group 2: Calculated intermediate — Dark grey
+    "Densidad Real calculada": ("4D4D4D", "FFFFFF"),
+    "Area protocolo BC": ("4D4D4D", "FFFFFF"),
+    "IP protocolo BC (t/m)": ("4D4D4D", "FFFFFF"),
+    "Long equivalente LB según pasaduras": ("4D4D4D", "FFFFFF"),
+    "Kg LB": ("4D4D4D", "FFFFFF"),
+    "Tonelaje tronado LB": ("4D4D4D", "FFFFFF"),
+    "Area LB": ("4D4D4D", "FFFFFF"),
+    "IP LB (ton/m)": ("4D4D4D", "FFFFFF"),
+    "kg LB eq varicion de densidad solo produccion": ("4D4D4D", "FFFFFF"),
+    "Tonelaje real tronado": ("4D4D4D", "FFFFFF"),
+    "Tonelaje tronado Estatus": ("4D4D4D", "FFFFFF"),
+    "Suma Long real BC": ("4D4D4D", "FFFFFF"),
+    "Suma Kg real BC": ("4D4D4D", "FFFFFF"),
+    "Promedio IP protocolo BC (ton/m)": ("4D4D4D", "FFFFFF"),
+    "Promedio Kg explosivo LB": ("4D4D4D", "FFFFFF"),
+    "Promedio IP LB (ton/m)": ("4D4D4D", "FFFFFF"),
+    "Suma Kg LB eq. Variación densidad sólo producción": ("4D4D4D", "FFFFFF"),
+    "Promedio long": ("4D4D4D", "FFFFFF"),
+    # Group 3: Baseline design — Blue
+    "Pasadura LB": ("0070C0", "FFFFFF"),
+    "Taco LB": ("0070C0", "FFFFFF"),
+    "Diámetro Protocolo": ("0070C0", "FFFFFF"),
+    "Densidad LB": ("0070C0", "FFFF00"),  # Yellow font
+    "B LB": ("0070C0", "FFFFFF"),
+    "S LB": ("0070C0", "FFFFFF"),
+    # Group 4: KPIs holes/quantities — Green
+    "% Aumento o reducción IP": ("00B050", "FFFFFF"),
+    "N° pozos BC": ("00B050", "FFFFFF"),
+    "N° pozos LB": ("00B050", "FFFFFF"),
+    "Pozos ahorrados": ("00B050", "FFFFFF"),
+    "Kg pozos ahorrados": ("00B050", "FFFFFF"),
+    # Group 5: Density savings — Magenta
+    "Kg ahorro por var. Densidad": ("D86DCD", "404040"),
+    # Group 6: Total savings & FC — Purple
+    "Total ahorro Kg": ("782170", "FFFFFF"),
+    "% ahorro Kg explosivo total": ("782170", "FFFFFF"),
+    "FC real [gr/ton]": ("782170", "FFFFFF"),
+    "FC LB [gr/ton]": ("782170", "FFFFFF"),
+    "Ahorro según FC": ("782170", "FFFFFF"),
+    # Group 7: Fragmentation & KPIs — Teal
+    "X80 total Proyectado": ("009999", "FFFFFF"),
+    "K80 total Real": ("009999", "FFFFFF"),
+    "X80 total LB": ("009999", "FFFFFF"),
+    "X80 total Proyectado Mineral": ("009999", "FFFFFF"),
+    "K80 total Real Mineral": ("009999", "FFFFFF"),
+    "X80 total LB Mineral": ("009999", "FFFFFF"),
+    "X80 total Proyectado Oxido": ("009999", "FFFFFF"),
+    "K80 total Real Oxido": ("009999", "FFFFFF"),
+    "X80 total LB Oxido": ("009999", "FFFFFF"),
+    "X80 total Proyectado Lastre": ("009999", "FFFFFF"),
+    "K80 total Real Lastre": ("009999", "FFFFFF"),
+    "X80 total LB Lastre": ("009999", "FFFFFF"),
+    "% de material mineral": ("009999", "FFFFFF"),
+    "% de material oxido": ("009999", "FFFFFF"),
+    "% de material lastre": ("009999", "FFFFFF"),
+    "Pozos totales": ("009999", "FFFFFF"),
+    "Pozos medidos": ("009999", "FFFFFF"),
+    "KPI Mineral": ("009999", "FFFFFF"),
+    "KPI Oxido": ("009999", "FFFFFF"),
+    "KPI Lastre": ("009999", "FFFFFF"),
+}
+
 
 # ==========================================================
 # EXCEL GENERATOR
@@ -381,12 +521,9 @@ def _safe_number(val):
 
 
 def write_sheet(ws, df):
-    """Write one blast sheet: headers + data + Excel formulas."""
+    """Write one blast sheet: headers + data + formulas + summary columns."""
 
-    # ── Styles ───────────────────────────────────────────────
-    hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
-    fill_bc = PatternFill("solid", fgColor="404040")
-    fill_lb = PatternFill("solid", fgColor="1D5FA0")
+    all_headers = HEADERS + SUMMARY_HEADERS
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     data_align = Alignment(horizontal="center", vertical="center")
     thin = Border(
@@ -394,62 +531,72 @@ def write_sheet(ws, df):
         top=Side("thin"), bottom=Side("thin"),
     )
 
-    # ── Headers (row 1) ─────────────────────────────────────
-    for ci, hdr in enumerate(HEADERS, 1):
+    # ── Headers (row 1) — all columns with per-group colors ──
+    for ci, hdr in enumerate(all_headers, 1):
         c = ws.cell(row=1, column=ci, value=hdr)
-        c.font = hdr_font
-        c.fill = fill_lb if ci >= 14 else fill_bc
+        fill_hex, font_hex = _CLR.get(hdr, ("808080", "FFFFFF"))
+        c.font = Font(name="Calibri", bold=True, color=font_hex, size=10)
+        c.fill = PatternFill("solid", fgColor=fill_hex)
         c.alignment = hdr_align
         c.border = thin
 
-    # ── Data rows (starting row 2) ──────────────────────────
+    # ── Per-row data (starting row 2) ────────────────────────
     for ri, (_, row) in enumerate(df.iterrows()):
         r = ri + 2  # Excel row
 
-        # Data columns
+        # Data columns (values from cleaned df)
         for col_1, src in DATA_MAP.items():
             val = _safe_number(row.get(src))
             c = ws.cell(row=r, column=col_1, value=val)
             c.alignment = data_align
             c.border = thin
 
-        # Densidad LB = 1.3  (column R = 18)
-        c = ws.cell(row=r, column=18, value=1.3)
+        # Densidad LB (col R=18): 0.8 for 100000XX, 0.9 for 200000XX, else 1.3
+        c = ws.cell(row=r, column=18,
+                    value=f"=IF(B{r}>=200000,0.9,IF(B{r}>=100000,0.8,1.3))")
         c.alignment = data_align
         c.border = thin
 
-        # Formula columns  (English function names — Excel shows
-        # them in the user locale automatically)
+        # Formula columns
         formulas = {
-            7:  f"=(I{r}/(C{r}-E{r}))/(POWER(F{r}/25.4,2)*0.507)",         # G  Densidad Real calculada
-            12: f"=J{r}*K{r}",                                              # L  Area protocolo BC
-            13: f"=IF(B{r}>5000,0,(L{r}*(C{r}-D{r})*2.5)/C{r})",           # M  IP protocolo BC
-            14: f"=C{r}+(O{r}-D{r})",                                       # N  Long equivalente LB
-            16: f'=IF(F{r}=270,5,IF(F{r}=311,5.5,""))',                     # P  Taco LB
-            19: f"=(Q{r}/2000)^2*PI()*(N{r}-P{r})*R{r}*1000",              # S  Kg LB
-            22: f"=T{r}*U{r}*(N{r}-O{r})",                                  # V  Tonelaje tronado LB
-            23: f"=T{r}*U{r}",                                              # W  Area LB
-            24: f"=IF(B{r}>5000,0,(W{r}*(N{r}-O{r})*2.5)/N{r})",           # X  IP LB
-            25: f"=IF(B{r}>5000,0,(Q{r}/2000)^2*PI()*(N{r}-P{r})*R{r}*1000)",  # Y  kg LB eq
-            26: f"=J{r}*K{r}*(C{r}-D{r})*2.5",                             # Z  Tonelaje real tronado
+            7:  f"=(I{r}/(C{r}-E{r}))/(POWER(F{r}/25.4,2)*0.507)",
+            12: f"=J{r}*K{r}",
+            13: f"=IF(B{r}>5000,0,(L{r}*(C{r}-D{r})*2.5)/C{r})",
+            14: f"=C{r}+(O{r}-D{r})",
+            16: f'=IF(F{r}=270,5,IF(F{r}=311,5.5,""))',
+            19: f"=(Q{r}/2000)^2*PI()*(N{r}-P{r})*R{r}*1000",
+            22: f"=T{r}*U{r}*(N{r}-O{r})",
+            23: f"=T{r}*U{r}",
+            24: f"=IF(B{r}>5000,0,(W{r}*(N{r}-O{r})*2.5)/N{r})",
+            25: f"=IF(B{r}>5000,0,(Q{r}/2000)^2*PI()*(N{r}-P{r})*R{r}*1000)",
+            26: f"=J{r}*K{r}*(C{r}-D{r})*2.5",
         }
         for col_1, formula in formulas.items():
             c = ws.cell(row=r, column=col_1, value=formula)
             c.alignment = data_align
             c.border = thin
 
+    # ── Summary columns (row 2 only) ─────────────────────────
+    for si, hdr in enumerate(SUMMARY_HEADERS):
+        col_1 = 27 + si  # starts at column AA (27)
+        formula = SUMMARY_FORMULAS.get(hdr)
+        if formula:
+            c = ws.cell(row=2, column=col_1, value=formula)
+            c.alignment = data_align
+            c.border = thin
+
     # ── Column widths ────────────────────────────────────────
-    widths = {
+    data_widths = {
         1: 11, 2: 12, 3: 12, 4: 13, 5: 12, 6: 16,
         7: 18, 8: 16, 9: 12, 10: 10, 11: 10,
         12: 14, 13: 16, 14: 22, 15: 13, 16: 10,
         17: 16, 18: 12, 19: 10, 20: 8, 21: 8,
         22: 17, 23: 10, 24: 14, 25: 28, 26: 17,
     }
-    for ci, w in widths.items():
+    for ci in range(1, len(all_headers) + 1):
+        w = data_widths.get(ci, 20)
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    # Header row height
     ws.row_dimensions[1].height = 45
     ws.freeze_panes = "A2"
 
