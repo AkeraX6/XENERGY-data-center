@@ -415,6 +415,7 @@ SUMMARY_FORMULAS = {
     "Promedio IP LB (ton/m)": '=AVERAGEIF(X:X,">0")',
     "Suma Kg LB eq. Variación densidad sólo producción": "=SUM(Y:Y)",
     "Promedio long": '=AVERAGEIFS(C:C,B:B,"<5000",C:C,">0")',
+    "% Aumento o reducción IP": "=(AD2-AF2)/AF2",
     "N° pozos BC": "=COUNT(B:B)",
     "N° pozos LB": "=AJ2*(1+AI2)",
     "Pozos ahorrados": "=AK2-AJ2",
@@ -502,6 +503,190 @@ _CLR = {
     "KPI Oxido": ("009999", "FFFFFF"),
     "KPI Lastre": ("009999", "FFFFFF"),
 }
+
+# ==========================================================
+# RESUMEN AHORRO CONSTANTS
+# ==========================================================
+MONTH_ABBR_ES = {
+    1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic",
+}
+
+RESUMEN_HEADERS = [
+    # Group 1: Identification + calculated base — Dark grey
+    ("Fecha tronadura", "4D4D4D", "FFFFFF"),
+    ("Expansi\u00f3n", "4D4D4D", "FFFFFF"),
+    ("Banco", "4D4D4D", "FFFFFF"),
+    ("ID Tronadura", "4D4D4D", "FFFFFF"),
+    ("Va con X-Energy?", "4D4D4D", "FFFFFF"),
+    ("Motivo", "4D4D4D", "FFFFFF"),
+    ("Datos reales insertados", "4D4D4D", "FFFFFF"),
+    ("Tonelaje tronado Estatus", "4D4D4D", "FFFFFF"),
+    ("Suma Long real BC", "4D4D4D", "FFFFFF"),
+    ("Suma Kg real BC", "4D4D4D", "FFFFFF"),
+    ("Promedio IP protocolo BC (ton/m)", "4D4D4D", "FFFFFF"),
+    ("Promedio Kg explosivo LB", "4D4D4D", "FFFFFF"),
+    ("Promedio IP LB (ton/m)", "4D4D4D", "FFFFFF"),
+    ("Suma Kg LB eq. Variaci\u00f3n densidad s\u00f3lo producci\u00f3n", "4D4D4D", "FFFFFF"),
+    ("Promedio long", "4D4D4D", "FFFFFF"),
+    # Group 2: KPIs — Green
+    ("% Aumento o reducci\u00f3n IP", "00B050", "FFFFFF"),
+    ("N\u00b0 pozos BC", "00B050", "FFFFFF"),
+    ("N\u00b0 pozos LB", "00B050", "FFFFFF"),
+    ("Pozos ahorrados", "00B050", "FFFFFF"),
+    ("Kg pozos ahorrados", "00B050", "FFFFFF"),
+    # Group 3: Density savings — Magenta
+    ("Kg ahorro por var. Densidad", "D86DCD", "404040"),
+    # Group 4: Total savings — Purple
+    ("Total ahorro Kg", "782170", "FFFFFF"),
+    ("% ahorro Kg explosivo total", "782170", "FFFFFF"),
+    ("FC real [gr/ton]", "782170", "FFFFFF"),
+    ("FC LB [gr/ton]", "782170", "FFFFFF"),
+    ("Ahorro seg\u00fan FC", "782170", "FFFFFF"),
+    # Group 5: Economics — Dark grey
+    ("Metros ahorro", "404040", "FFFFFF"),
+    ("Precio Explosivo (USD/ton)", "404040", "FFFFFF"),
+    ("Precio perforaci\u00f3n (USD/m)", "404040", "FFFFFF"),
+    ("Precio SI (USD/un)", "404040", "FFFFFF"),
+    ("Ahorro reducci\u00f3n explosivos (USD)", "404040", "FFFFFF"),
+    ("Ahorro perforaci\u00f3n (USD)", "404040", "FFFFFF"),
+    ("Ahorro SI (USD)", "404040", "FFFFFF"),
+]
+
+
+def _extract_from_name(name):
+    """Extract (expansion, banco) from a cleaned sheet name."""
+    n = re.sub(r"^(?:BC)[_-]?", "", name, flags=re.IGNORECASE).strip("_- ")
+    parts = re.split(r"[_-]+", n)
+    banco = ""
+    expansion = ""
+    if len(parts) >= 2:
+        if re.match(r"^\d{4}$", parts[0]):
+            banco = parts[0]
+            expansion = parts[1]
+        elif re.match(r"^\d{4}$", parts[1]):
+            expansion = parts[0]
+            banco = parts[1]
+    return expansion, banco
+
+
+def write_resumen_sheet(ws, cleaned_files):
+    """Write the Resumen Ahorro sheet with cross-references to blast sheets."""
+    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    data_align = Alignment(horizontal="center", vertical="center")
+    thin = Border(
+        left=Side("thin"), right=Side("thin"),
+        top=Side("thin"), bottom=Side("thin"),
+    )
+
+    # \u2500\u2500 Headers (row 1) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    for ci, (hdr, fill_hex, font_hex) in enumerate(RESUMEN_HEADERS, 1):
+        c = ws.cell(row=1, column=ci, value=hdr)
+        c.font = Font(name="Calibri", bold=True, color=font_hex, size=10)
+        c.fill = PatternFill("solid", fgColor=fill_hex)
+        c.alignment = hdr_align
+        c.border = thin
+
+    # \u2500\u2500 One row per blast \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    for i, (sheet_name, _df) in enumerate(cleaned_files):
+        r = i + 2
+        sn = sheet_name
+        sn_esc = sn.replace("'", "''")
+
+        expansion, banco = _extract_from_name(sn)
+
+        # A: Fecha tronadura — empty (with border)
+        ws.cell(row=r, column=1).alignment = data_align
+        ws.cell(row=r, column=1).border = thin
+
+        # B: Expansi\u00f3n
+        c = ws.cell(row=r, column=2, value=expansion)
+        c.alignment = data_align
+        c.border = thin
+
+        # C: Banco
+        c = ws.cell(row=r, column=3,
+                    value=int(banco) if banco and str(banco).isdigit() else banco)
+        c.alignment = data_align
+        c.border = thin
+
+        # D: ID Tronadura
+        c = ws.cell(row=r, column=4, value=sn)
+        c.alignment = data_align
+        c.border = thin
+
+        # E-H: empty (with borders)
+        for col_1 in (5, 6, 7, 8):
+            ws.cell(row=r, column=col_1).alignment = data_align
+            ws.cell(row=r, column=col_1).border = thin
+
+        # I-Z: cross-references to blast sheet summary cells
+        ref_map = {
+            9:  "AB2",  # Suma Long real BC
+            10: "AC2",  # Suma Kg real BC
+            11: "AD2",  # Promedio IP protocolo BC
+            12: "AE2",  # Promedio Kg explosivo LB
+            13: "AF2",  # Promedio IP LB
+            14: "AG2",  # Suma Kg LB eq
+            15: "AH2",  # Promedio long
+            16: "AI2",  # % Aumento o reducci\u00f3n IP
+            17: "AJ2",  # N\u00b0 pozos BC
+            18: "AK2",  # N\u00b0 pozos LB
+            19: "AL2",  # Pozos ahorrados
+            20: "AM2",  # Kg pozos ahorrados
+            21: "AN2",  # Kg ahorro por var. Densidad
+            22: "AO2",  # Total ahorro Kg
+            23: "AP2",  # % ahorro Kg explosivo total
+            24: "AQ2",  # FC real [gr/ton]
+            25: "AR2",  # FC LB [gr/ton]
+            26: "AS2",  # Ahorro seg\u00fan FC
+        }
+        for col_1, cell_ref in ref_map.items():
+            c = ws.cell(row=r, column=col_1,
+                        value=f"='{sn_esc}'!{cell_ref}")
+            c.alignment = data_align
+            c.border = thin
+
+        # AA (27): Metros ahorro = IF(S<0, 0, S*O)
+        c = ws.cell(row=r, column=27, value=f"=IF(S{r}<0,0,S{r}*O{r})")
+        c.alignment = data_align
+        c.border = thin
+
+        # AB (28): Precio Explosivo (constant)
+        c = ws.cell(row=r, column=28, value=869.094318859187)
+        c.alignment = data_align
+        c.border = thin
+
+        # AC (29): Precio perforaci\u00f3n (constant)
+        c = ws.cell(row=r, column=29, value=17)
+        c.alignment = data_align
+        c.border = thin
+
+        # AD (30): Precio SI (constant)
+        c = ws.cell(row=r, column=30, value=35)
+        c.alignment = data_align
+        c.border = thin
+
+        # AE (31): Ahorro reducci\u00f3n explosivos = (V/1000)*AB
+        c = ws.cell(row=r, column=31, value=f"=(V{r}/1000)*AB{r}")
+        c.alignment = data_align
+        c.border = thin
+
+        # AF (32): Ahorro perforaci\u00f3n = AA*AC
+        c = ws.cell(row=r, column=32, value=f"=AA{r}*AC{r}")
+        c.alignment = data_align
+        c.border = thin
+
+        # AG (33): Ahorro SI = S*AD
+        c = ws.cell(row=r, column=33, value=f"=S{r}*AD{r}")
+        c.alignment = data_align
+        c.border = thin
+
+    # \u2500\u2500 Column widths \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    for ci in range(1, len(RESUMEN_HEADERS) + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 18
+    ws.row_dimensions[1].height = 45
+    ws.freeze_panes = "A2"
 
 
 # ==========================================================
@@ -602,10 +787,16 @@ def write_sheet(ws, df):
 
 
 def generate_excel(cleaned_files):
-    """Build workbook with one sheet per blast file."""
+    """Build workbook with Resumen sheet first, then one sheet per blast."""
     wb = Workbook()
-    wb.remove(wb.active)  # remove default empty sheet
+    wb.remove(wb.active)
 
+    # Resumen Ahorro summary sheet (first sheet)
+    month_abbr = MONTH_ABBR_ES[date.today().month]
+    ws_resumen = wb.create_sheet(title=f"Resumen Ahorro {month_abbr}")
+    write_resumen_sheet(ws_resumen, cleaned_files)
+
+    # Individual blast sheets
     for sheet_name, df in cleaned_files:
         ws = wb.create_sheet(title=sheet_name)
         write_sheet(ws, df)
@@ -786,4 +977,3 @@ if uploaded_files:
 
 else:
     st.info("Upload QAQC Excel or CSV files to begin.")
-
