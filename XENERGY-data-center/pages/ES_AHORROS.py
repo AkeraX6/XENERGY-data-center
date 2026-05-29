@@ -645,36 +645,43 @@ def write_resumen_sheet(ws, cleaned_files):
             c = ws.cell(row=r, column=col_1,
                         value=f"='{sn_esc}'!{cell_ref}")
             c.alignment = data_align
+            c.number_format = '0.00'
             c.border = thin
 
         # AA (27): Metros ahorro = IF(S<0, 0, S*O)
         c = ws.cell(row=r, column=27, value=f"=IF(S{r}<0,0,S{r}*O{r})")
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AB (28): Precio Explosivo (constant)
         c = ws.cell(row=r, column=28, value=869.094318859187)
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AC (29): Precio perforaci\u00f3n (constant)
         c = ws.cell(row=r, column=29, value=17)
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AD (30): Precio SI (constant)
         c = ws.cell(row=r, column=30, value=35)
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AE (31): Ahorro reducci\u00f3n explosivos = (V/1000)*AB
         c = ws.cell(row=r, column=31, value=f"=(V{r}/1000)*AB{r}")
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AF (32): Ahorro perforaci\u00f3n = AA*AC
         c = ws.cell(row=r, column=32, value=f"=AA{r}*AC{r}")
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # AG (33): Ahorro SI = S*AD
@@ -734,12 +741,14 @@ def write_sheet(ws, df):
             val = _safe_number(row.get(src))
             c = ws.cell(row=r, column=col_1, value=val)
             c.alignment = data_align
+            c.number_format = '0.00'
             c.border = thin
 
         # Densidad LB (col R=18): 0.8 for 100000XX, 0.9 for 200000XX, else 1.3
         c = ws.cell(row=r, column=18,
-                    value=f"=IF(B{r}>=200000,0.9,IF(B{r}>=100000,0.8,1.3))")
+                    value=f'=IF(LEFT(TEXT(B{r},"0"),6)="200000",0.9,IF(LEFT(TEXT(B{r},"0"),6)="100000",0.8,1.3))')
         c.alignment = data_align
+        c.number_format = '0.00'
         c.border = thin
 
         # Formula columns
@@ -759,6 +768,7 @@ def write_sheet(ws, df):
         for col_1, formula in formulas.items():
             c = ws.cell(row=r, column=col_1, value=formula)
             c.alignment = data_align
+            c.number_format = '0.00'
             c.border = thin
 
     # ── Summary columns (row 2 only) ─────────────────────────
@@ -768,6 +778,7 @@ def write_sheet(ws, df):
         if formula:
             c = ws.cell(row=2, column=col_1, value=formula)
             c.alignment = data_align
+            c.number_format = '0.00'
             c.border = thin
 
     # ── Column widths ────────────────────────────────────────
