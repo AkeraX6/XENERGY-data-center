@@ -150,6 +150,26 @@ def process_file(df):
     if deleted > 0:
         steps.append(f"🗑️ Rows with invalid X/Y/Z removed: {deleted}")
 
+    # ---------- Auto-detect missing decimals (row-level divide by 100) ----------
+    # This handles mixed files safely: only rows that look scaled x100 are corrected.
+    # Example: 1915160 -> 19151.6 (only if /100 lands in a plausible coordinate range).
+    if len(df) > 0:
+        def correct_scaled_values(col_name, min_ok, max_ok):
+            original = df[col_name]
+            corrected = original / 100
+            mask = original.notna() & (original > max_ok) & corrected.between(min_ok, max_ok)
+            corrected_count = int(mask.sum())
+            if corrected_count > 0:
+                df.loc[mask, col_name] = corrected[mask]
+                steps.append(
+                    f"⚠️ {col_name}: detected {corrected_count} value(s) scaled x100 → divided by 100."
+                )
+
+        # Normal ranges used by the process
+        correct_scaled_values("X", 10000, 40000)
+        correct_scaled_values("Y", 80000, 400000)
+        correct_scaled_values("Z", 2000, 4000)
+
     # Coordinate range filters only for Format 1
     if col_hcarga is not None and len(df) > 0:
         before = len(df)
@@ -363,4 +383,5 @@ if uploaded_files:
 
 else:
     st.info("📂 Please upload one or more Excel/CSV files to begin.")
+
 
