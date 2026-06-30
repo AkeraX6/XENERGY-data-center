@@ -425,6 +425,21 @@ if uploaded_files:
     st.dataframe(merged_df_raw.head(20), use_container_width=True)
     st.info(f"📏 Total rows before cleaning: {len(merged_df_raw)}")
 
+    # --- Download raw merged file (no filters, no transformations) ---
+    raw_buffer = io.BytesIO()
+    with pd.ExcelWriter(raw_buffer, engine="openpyxl") as writer:
+        merged_df_raw.to_excel(writer, index=False, sheet_name="QAQC_Raw_Merged")
+    raw_buffer.seek(0)
+
+    st.download_button(
+        "📥 Download Merged Raw File (no filtering)",
+        raw_buffer,
+        file_name=f"BC_QAQC_RAW_{date.today().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="download_raw_merged"
+    )
+
     st.markdown("---")
     st.subheader("✅ After Cleaning (All Files Merged)")
     st.dataframe(merged_df.head(20), use_container_width=True)
