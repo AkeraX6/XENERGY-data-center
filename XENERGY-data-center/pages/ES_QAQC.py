@@ -346,7 +346,9 @@ def process_file(df):
         )
 
         # STEP 8b – Fill empty Asset with most repeated in same Grid, else overall mode
-        df[asset_col] = _replace_dash_with_na(df[asset_col])
+        # Cast to object dtype to avoid pyarrow string array assignment errors when
+        # mapped values contain NaN (TypeError on Streamlit Cloud with pandas + pyarrow).
+        df[asset_col] = _replace_dash_with_na(df[asset_col]).astype(object)
         empty_before = int(df[asset_col].isna().sum())
         if empty_before > 0 and "Grid" in df.columns:
             # Mode per Grid (pattern)
@@ -354,12 +356,17 @@ def process_file(df):
                 lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else pd.NA
             )
             filled_mask = df[asset_col].isna()
-            df.loc[filled_mask, asset_col] = df.loc[filled_mask, "Grid"].map(grid_mode)
+            mapped = df.loc[filled_mask, "Grid"].map(grid_mode)
+            # Only assign where we actually have a value, keep NaN as-is otherwise
+            valid = mapped.notna()
+            if valid.any():
+                idx_to_fill = mapped.index[valid]
+                df.loc[idx_to_fill, asset_col] = mapped.loc[valid].astype(object).values
 
         # Remaining empties → overall mode
         still_empty = int(df[asset_col].isna().sum())
         if still_empty > 0:
-            overall_mode = df[asset_col].mode()
+            overall_mode = df[asset_col].mode(dropna=True)
             if len(overall_mode) > 0:
                 df[asset_col] = df[asset_col].fillna(overall_mode.iloc[0])
 
