@@ -32,12 +32,27 @@ if "page" not in st.session_state:
 # ===============================
 # HEADER IMAGE
 # ===============================
-image_path = Path(__file__).parent / "Cover.png"
+# Accept either Cover.png or Cover.jpg so the app doesn't break if the file
+# is renamed. Streamlit deprecated `use_container_width` on `st.image` in
+# newer versions (replaced by `width="stretch"`), so we try the new API
+# first and fall back to the old one for backward compatibility.
+cover_candidates = ["Cover.png", "Cover.jpg", "Cover.jpeg"]
+image_path = next(
+    (Path(__file__).parent / name for name in cover_candidates
+     if (Path(__file__).parent / name).exists()),
+    None,
+)
 
-if image_path.exists():
-    st.image(str(image_path), use_container_width=True)
+if image_path is not None:
+    try:
+        st.image(str(image_path), width="stretch")          # Streamlit >= 1.49
+    except TypeError:
+        try:
+            st.image(str(image_path), use_container_width=True)  # 1.29 – 1.48
+        except TypeError:
+            st.image(str(image_path))                        # Any version
 else:
-    st.warning("⚠️ Cover image not found: Cover.png")
+    st.warning("⚠️ Cover image not found (looked for Cover.png / Cover.jpg).")
 
 # ===============================
 # PAGE: DASHBOARD
