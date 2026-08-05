@@ -1,5 +1,18 @@
-[client]
+[server]
 maxUploadSize = 1024
+enableCORS = false
+enableXsrfProtection = true
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[runner]
+fastReruns = true
 
 [logger]
 level = "info"
