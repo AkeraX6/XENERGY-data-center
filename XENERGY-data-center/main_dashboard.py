@@ -1,5 +1,7 @@
 import streamlit as st
 import importlib.util
+import traceback
+import gc
 from pathlib import Path
 
 # ===============================
@@ -43,7 +45,7 @@ else:
 def dashboard_page():
     st.subheader("🧭 Select Processing Module")
 
-    mine = st.selectbox("Select Mine", ["Select...", "Chinalco", "DGM", "Escondida", "Mantos Blancos"])
+    mine = st.selectbox("Select Mine", ["Select...", "Chinalco", "DGM", "Escondida", "Manto Verde", "Mantos Blancos"])
     file_type = st.selectbox(
         "Select File Type",
         ["Select...", "Drilling", "QAQC", "Fragmentation", "Excavation", "Shovel Position", "Block Models", "Drone Fragmentation", "Drill Profile", "Densities", "Ahorros"]
@@ -55,7 +57,7 @@ def dashboard_page():
         if mine == "Select..." or file_type == "Select...":
             st.warning("⚠️ Please select both Mine and File Type before proceeding.")
         else:
-            mine_codes = {"Chinalco": "CHI", "DGM": "DGM", "Escondida": "ES", "Mantos Blancos": "MB"}
+            mine_codes = {"Chinalco": "CHI", "DGM": "DGM", "Escondida": "ES", "Manto Verde": "MV", "Mantos Blancos": "MB"}
             file_codes = {
                 "Drilling": "AUTO",
                 "QAQC": "QAQC",
@@ -98,11 +100,30 @@ def module_page():
     if not module_path.exists():
         st.error(f"❌ The file `{module_name}` was not found in `/pages` folder.")
         return
-    
-    # Load and execute selected module inline
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+
+    # Load and execute selected module inline with error containment so a
+    # single-page crash does not take down the whole Streamlit Cloud app.
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except MemoryError:
+        st.error(
+            "🧠 The app ran out of memory while processing this module.\n\n"
+            "Try uploading a smaller file, or split your dataset into batches."
+        )
+        gc.collect()
+    except Exception as e:
+        st.error(f"❌ Error while running `{module_name}`: {e}")
+        with st.expander("🔍 Show technical details"):
+            st.code(traceback.format_exc())
+        if st.button("↩️ Return to Menu", key="err_back"):
+            st.session_state.page = "dashboard"
+            st.rerun()
+    finally:
+        # Release large objects between page switches to keep memory low on
+        # Streamlit Community Cloud (1 GB RAM limit).
+        gc.collect()
 
 # ===============================
 # NAVIGATION LOGIC
